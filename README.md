@@ -1,0 +1,65 @@
+# kg - Knowledge Graph CLI
+
+A CLI-first knowledge base management tool with graph-powered relationships.
+
+## What is kg?
+
+**kg** stores your notes as Markdown files with typed frontmatter, backed by an embedded graph database. It's designed for developers who want:
+
+- **CLI-first workflow**: Script, automate, and integrate with your tools
+- **Graph relationships**: First-class support for links, backlinks, and queries
+- **Obsidian compatibility**: Use kg for CLI power, Obsidian for visual editing
+- **Multiple vaults**: Separate knowledge bases for different domains
+
+## Development Approach
+
+This project uses **Spec-Driven Development (SDD)**: specifications are the source of truth, implementation follows.
+
+## Project Structure
+
+```
+├── specs/                 # Source of truth
+│   ├── PRODUCT.md         # Product specification
+│   ├── features/          # Feature specifications
+│   ├── contracts/         # Interface contracts
+│   └── decisions/         # Architecture Decision Records
+├── AGENTS.md              # AI assistant instructions
+├── docs/                  # Documentation
+└── src/                   # Implementation
+```
+
+## Current Phase
+
+**Specification**: Defining requirements and making architectural decisions.
+
+### Key Decisions Pending
+
+- [ ] Language choice (Rust vs Go) - `ADR-001`
+- [ ] Embedded graph database - `ADR-002`
+
+## Quick Reference
+
+See `specs/PRODUCT.md` for full specification.
+
+### Planned Commands
+
+```bash
+# Vault management
+kg init                    # Initialize vault
+kg vault list              # List vaults
+
+# Note operations
+kg new "Note title"        # Create note
+kg edit note-name          # Edit in $EDITOR
+kg list                    # List notes
+kg search "query"          # Full-text search
+
+# Graph operations
+kg links note-name         # Show outgoing links
+kg backlinks note-name     # Show incoming links
+kg query "..."             # Graph query
+```
+
+## License
+
+TBD
