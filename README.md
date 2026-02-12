@@ -1,10 +1,10 @@
-# kg - Knowledge Graph CLI
+# kbase - Knowledge Base CLI
 
 A CLI-first knowledge base management tool with graph-powered relationships.
 
-## What is kg?
+## What is kbase?
 
-**kg** stores your notes as Markdown files with typed frontmatter, backed by an embedded graph database. It's designed for developers who want:
+**kbase** stores your notes as Markdown files with typed frontmatter, backed by an embedded graph database. It's designed for developers who want:
 
 - **CLI-first workflow**: Script, automate, and integrate with your tools
 - **Graph relationships**: First-class support for links, backlinks, and queries
@@ -64,19 +64,21 @@ See `specs/PRODUCT.md` for full specification.
 
 ```bash
 # Vault management
-kg init                    # Initialize vault
-kg vault list              # List vaults
+kbase init                    # Initialize vault
+kbase vault list              # List vaults
 
 # Note operations
-kg new "Note title"        # Create note
-kg edit note-name          # Edit in $EDITOR
-kg list                    # List notes
-kg search "query"          # Full-text search
+kbase new "Note title"        # Create note
+kbase edit note-name          # Edit in $EDITOR
+kbase list                    # List notes
+kbase search "query"          # Full-text search
 
 # Graph operations
-kg links note-name         # Show outgoing links
-kg backlinks note-name     # Show incoming links
-kg query "..."             # Graph query
+kbase links note-name         # Show outgoing links
+kbase backlinks note-name     # Show incoming links
+kbase query "..."             # Graph query
+kbase similar note-name       # Find similar notes
+kbase embed note-name         # Generate embeddings
 ```
 
 ## License

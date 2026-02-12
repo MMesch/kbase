@@ -1,8 +1,8 @@
-# Product Specification: kg
+# Product Specification: kbase
 
 ## Vision
 
-**kg** (Knowledge Graph) is a CLI-first knowledge base management tool that stores notes as Markdown files with typed frontmatter, backed by an embedded graph database.
+**kbase** (Knowledge Base) is a CLI-first knowledge base management tool that stores notes as Markdown files with typed frontmatter, backed by an embedded graph database.
 
 The CLI is the core engine; future clients (Vim plugin, TUI, Obsidian integration) can be built on top of it.
 
@@ -18,19 +18,22 @@ Developers and technical users comfortable with:
 ### Vault
 
 A vault is a directory containing:
-- Markdown note files in a flat structure (all in vault root)
-- `.kg/` directory with configuration, schema, database, and virtual views
+- Markdown note files (flat structure recommended, subfolders supported)
+- `.kbase/` directory with configuration, schema, database, and virtual views (optional)
 - Virtual folder views generated dynamically by tag, field, etc.
 
 Users can have **multiple vaults** for different knowledge domains.
 
+**Vault discovery**: The CLI automatically detects vaults by looking for a `.kbase/` directory in the current directory or parent directories. Users can also specify a vault explicitly using the `--vault` argument.
+
 **Vault structure:**
 ```
 my-vault/
-├── .kg/
+├── .kbase/
 │   ├── config.toml          # Vault configuration
 │   ├── schema.yaml          # Frontmatter schema definition
 │   ├── graph.db             # Embedded graph database
+│   ├── embeddings/          # Cached embeddings for similarity search
 │   └── views/               # Virtual folder views (symlinks)
 │       └── tags/
 │           └── dev/
@@ -41,7 +44,9 @@ my-vault/
 └── project-plan-x7y8z9.md
 ```
 
-**Note**: Physical files are flat (UUID ensures uniqueness). Organization is via **virtual folder views** that create symlink hierarchies based on tags or other fields. A note can appear in multiple virtual folders.
+**Note**: The `.kbase/` directory is optional. Users can work with a standard Obsidian vault without the `.kbase/` directory, though advanced features like graph queries and virtual views will be unavailable.
+
+**Note**: Physical files are flat (UUID ensures uniqueness). Organization is via **virtual folder views** that create symlink hierarchies based on tags or other fields. A note can appear in multiple virtual folders. Subfolders are also supported for Obsidian compatibility and structured organization.
 
 ### Note
 
@@ -67,6 +72,8 @@ This enables:
 - Query by any field, not just links
 - Relationships between notes via shared nodes (e.g., notes with same author)
 - Unified model for links, tags, and custom fields
+- Graph validation (SHACL-like constraints)
+- Inference (OWL-like reasoning)
 
 This model maps to all three candidate databases:
 - **Datalog**: Relations/tuples
@@ -80,6 +87,8 @@ Query language options under evaluation (see ADR-002):
 - **SPARQL** (Oxigraph) - semantic web standard
 - **Cypher** (CQLite) - Neo4j-style pattern matching
 
+**Database synchronization**: The Markdown files are the source of truth. The graph database is kept in sync with the structured elements of the vault for fast queries. The database is regenerated on demand and can be cached for performance.
+
 ### Tags
 
 Hierarchical tags using slash notation:
@@ -87,14 +96,19 @@ Hierarchical tags using slash notation:
 - Parent tags are implied: `dev/rust` implies membership in `dev`
 - Stored in frontmatter, indexed in graph
 
+**Tags are nodes in the graph**: Tags are treated as first-class nodes in the knowledge graph, not just metadata. This enables:
+- Tag hierarchies as tree structures through the graph
+- Easier traversal and search
+- Unified representation with other entities
+
 **Tags are trees in the graph** with `parentTag` edges:
 ```
 tag:dev/rust --parentTag--> tag:dev
 ```
 
-**Descendant search by default**: `kg list dev` returns notes tagged `dev`, `dev/rust`, `dev/go`, etc. Use `--exact` for exact match only.
+**Descendant search by default**: `kbase list dev` returns notes tagged `dev`, `dev/rust`, `dev/go`, etc. Use `--exact` for exact match only.
 
-**Filter syntax**: `kg list dev -f "status==draft author==Alice"` combines tag with field filters.
+**Filter syntax**: `kbase list dev -f "status==draft author==Alice"` combines tag with field filters.
 
 These trees can be **realized as virtual folder views** for browsing notes by tag hierarchy.
 
@@ -105,7 +119,7 @@ These trees can be **realized as virtual folder views** for browsing notes by ta
 - Flat file structure (Obsidian can add its own folder organization)
 - WikiLinks and standard links both supported
 - Obsidian-compatible default frontmatter fields
-- `.kg/` directory is ignored by Obsidian (hidden folder)
+- `.kbase/` directory is ignored by Obsidian (hidden folder)
 
 ## Functional Requirements
 
@@ -113,65 +127,71 @@ These trees can be **realized as virtual folder views** for browsing notes by ta
 
 | Command | Description |
 |---------|-------------|
-| `kg init [path]` | Initialize a new vault |
-| `kg new <title>` | Create a new note with default frontmatter |
-| `kg edit <ref>` | Open note in editor (prompt if $EDITOR unset) |
-| `kg show <ref>` | Display note content |
-| `kg list [tag] [-f "filters"] [-s "text"]` | List notes by tag, filters, and/or full-text search |
-| `kg rm <ref>` | Delete note (warn if has backlinks, confirm) |
+| `kbase init [path]` | Initialize a new vault |
+| `kbase new <title>` | Create a new note with default frontmatter |
+| `kbase edit <ref>` | Open note in editor (prompt if $EDITOR unset) |
+| `kbase show <ref>` | Display note content |
+| `kbase list [tag] [-f "filters"] [-s "text"]` | List notes by tag, filters, and/or full-text search |
+| `kbase rm <ref>` | Delete note (warn if has backlinks, confirm) |
 
 **Note references (`<ref>`)**: Accept file path or short UUID with shell completion.
 
 **List examples**:
 ```bash
-kg list dev                         # by tag (+ descendants)
-kg list dev -f "status==draft"      # tag + field filter
-kg list -s "rust async"             # full-text search
-kg list dev -f "author==alice" -s "tutorial"  # combined
+kbase list dev                         # by tag (+ descendants)
+kbase list dev -f "status==draft"      # tag + field filter
+kbase list -s "rust async"             # full-text search
+kbase list dev -f "author==alice" -s "tutorial"  # combined
 ```
 
-All modifying operations (`kg new`, `kg edit`, `kg rm`) automatically update virtual folder views.
+All modifying operations (`kbase new`, `kbase edit`, `kbase rm`) automatically update virtual folder views.
 
 ### Graph Operations
 
 | Command | Description |
 |---------|-------------|
-| `kg links <ref>` | Show outgoing links from note |
-| `kg backlinks <ref>` | Show incoming links to note |
-| `kg query <query>` | Execute raw graph query (advanced, syntax per ADR-002) |
-| `kg export [--format dot\|graphml]` | Export graph structure |
+| `kbase links <ref>` | Show outgoing links from note |
+| `kbase backlinks <ref>` | Show incoming links to note |
+| `kbase query <query>` | Execute raw graph query (advanced, syntax per ADR-002) |
+| `kbase export [--format dot\|graphml]` | Export graph structure |
+| `kbase similar <ref> [--top N]` | Find similar notes using embeddings |
+| `kbase embed <ref>` | Generate/update embeddings for a note |
+| `kbase validate` | Run graph validation (SHACL-like constraints) |
+| `kbase infer` | Run inference (OWL-like reasoning) |
 
 **Note**: Links are created by editing note content (WikiLinks or Markdown links). The graph is derived from note content, not managed separately.
+
+**Embeddings**: Vector representations of notes are stored in `.kbase/embeddings/` and cached based on content hash for efficient similarity search.
 
 ### Organization Operations
 
 | Command | Description |
 |---------|-------------|
-| `kg view tags` | Show notes as virtual folder tree by tag hierarchy |
-| `kg view <field>` | Show notes grouped by any field (status, author, etc.) |
-| `kg view create` | Create a custom view definition |
-| `kg view sync` | Regenerate virtual folder symlinks |
-| `kg reorg <rule>` | Physically reorganize files by rule |
-| `kg tags` | List all tags with counts |
-| `kg tags tree` | Show tag hierarchy as tree |
+| `kbase view tags` | Show notes as virtual folder tree by tag hierarchy |
+| `kbase view <field>` | Show notes grouped by any field (status, author, etc.) |
+| `kbase view create` | Create a custom view definition |
+| `kbase view sync` | Regenerate virtual folder symlinks |
+| `kbase reorg <rule>` | Physically reorganize files by rule |
+| `kbase tags` | List all tags with counts |
+| `kbase tags tree` | Show tag hierarchy as tree |
 
-Virtual folder views create symlink trees in `.kg/views/` for file manager browsing.
+Virtual folder views create symlink trees in `.kbase/views/` for file manager browsing.
 
 ### Vault Management
 
 | Command | Description |
 |---------|-------------|
-| `kg vault status` | Show current vault info and stats |
-| `kg sync` | Force re-sync graph from files |
-| `kg validate` | Validate all notes against schema |
+| `kbase vault status` | Show current vault info and stats |
+| `kbase sync` | Force re-sync graph from files |
+| `kbase validate` | Validate all notes against schema |
 
 ### Schema Operations
 
 | Command | Description |
 |---------|-------------|
-| `kg schema show` | Display frontmatter schema |
-| `kg schema validate` | Validate all notes against schema |
-| `kg schema migrate` | Update notes when schema changes |
+| `kbase schema show` | Display frontmatter schema |
+| `kbase schema validate` | Validate all notes against schema |
+| `kbase schema migrate` | Update notes when schema changes |
 
 ### Output Formatting
 
@@ -185,7 +205,7 @@ All list/query commands support multiple output formats:
 
 - `kg completion <shell>` generates completion script
 - Completions are path-aware (check filesystem)
-- ID-based completion via `.kg/by-id/` virtual folder
+- ID-based completion via `.kbase/by-id/` virtual folder
 
 ## Non-Functional Requirements
 
@@ -205,11 +225,11 @@ All list/query commands support multiple output formats:
 ### Verbosity
 - Default: Quiet (only requested output)
 - `-v` / `--verbose`: Informative messages
-- Configurable default in `.kg/config.toml`
+- Configurable default in `.kbase/config.toml`
 
 ## Configuration
 
-All configuration lives in `.kg/config.toml` within each vault.
+All configuration lives in `.kbase/config.toml` within each vault.
 
 ```toml
 [vault]
@@ -230,7 +250,7 @@ fallback = "prompt"  # "prompt" | "vim" | "nano" | etc.
 
 ## Schema Definition
 
-Schema lives in `.kg/schema.yaml`:
+Schema lives in `.kbase/schema.yaml`:
 
 ```yaml
 # Required fields for all notes

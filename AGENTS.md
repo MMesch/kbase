@@ -2,13 +2,15 @@
 
 This project follows **Spec-Driven Development**. Read this file before generating any code.
 
-## Project: kg (Knowledge Graph CLI)
+## Project: kbase (Knowledge Base CLI)
 
 A CLI-first knowledge base management tool with:
 - Markdown notes with typed frontmatter
 - Embedded graph database with SPARQL support
 - Obsidian vault compatibility
 - Multiple vault support
+- Similarity search with embeddings
+- Graph validation and inference
 
 ## Core Principles
 
