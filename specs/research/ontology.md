@@ -20,6 +20,109 @@ Ontologies provide formal definitions of concepts, relationships, and constraint
 - **Performance**: Impact on common operations (note creation, querying)
 - **Standards compliance**: Use of established W3C standards when beneficial
 
+## Why Use Ontologies Instead of Simpler Approaches?
+
+Ontologies provide significant advantages over simple tag hierarchies or basic validation:
+
+### 1. Semantic Richness vs. Simple Tags
+
+**Simple Tag Hierarchy:**
+```yaml
+tags: [dev/rust, dev/go]
+```
+- Just strings with slash notation
+- No formal meaning or relationships
+- Hard to validate or reason about
+
+**Ontology Approach:**
+```turtle
+dev:rust rdfs:subClassOf dev: .
+dev:go rdfs:subClassOf dev: .
+```
+- Formal class hierarchy with defined semantics
+- Machine-readable relationships
+- Enables automatic reasoning (inference)
+
+### 2. Constraint Inheritance vs. Duplicate Validation
+
+**Simple Validation (Duplicate Rules):**
+```yaml
+# schema.yaml
+Note:
+  required: [title, created, modified]
+MeetingNote:
+  required: [title, created, modified, attendees, date]  # Duplication!
+```
+
+**Ontology Approach (Inheritance):**
+```turtle
+kbase:MeetingNote rdfs:subClassOf kbase:Note .
+kbase:Note kbase:requires kbase:title, kbase:created, kbase:modified .
+kbase:MeetingNote kbase:requires kbase:attendees, kbase:date .
+```
+- Constraints inherited automatically
+- No duplication
+- Easier maintenance
+
+### 3. Relationship Typing vs. Ad-Hoc Links
+
+**Simple Links:**
+```markdown
+[[note-a]] links to [[note-b]]  # What kind of link?
+```
+
+**Ontology Approach:**
+```turtle
+kbase:linksTo a owl:ObjectProperty ;
+    rdfs:domain kbase:Note ;
+    rdfs:range kbase:Note ;
+    rdfs:subPropertyOf kbase:relatedTo .
+
+kbase:hasBacklink owl:inverseOf kbase:linksTo .
+```
+- Explicit relationship types
+- Domain/range constraints
+- Automatic inverse relationships
+
+### 4. Interoperability and Standards
+
+**Simple Approach:**
+- Custom formats
+- Hard to integrate with other tools
+- Vendor lock-in
+
+**Ontology Approach:**
+- W3C standards (RDF, RDFS, OWL)
+- Works with semantic web tools
+- Data portability
+
+### 5. Advanced Query Capabilities
+
+**With Ontologies You Can:**
+- Find all notes related through any relationship type
+- Query by semantic meaning, not just string matching
+- Use reasoning to find implicit connections
+- Validate complex constraints automatically
+
+**Simple Approaches Require:**
+- Manual query construction for each case
+- No semantic understanding
+- Explicit storage of all relationships
+
+## Comparison: Ontologies vs. Simple Approaches
+
+| Feature | Simple Tags/Validation | Ontology Approach |
+|---------|------------------------|-------------------|
+| Hierarchy | Manual string parsing | Formal class hierarchy |
+| Validation | Duplicate rules | Inherited constraints |
+| Relationships | Ad-hoc links | Typed relationships |
+| Inference | Manual queries | Automatic reasoning |
+| Standards | Custom formats | W3C standards |
+| Maintenance | High (duplication) | Low (inheritance) |
+| Query Power | Basic | Advanced semantic queries |
+| Tool Integration | Limited | Semantic web ecosystem |
+| Data Portability | Low | High |
+
 ## Use Cases for Ontologies in kbase
 
 ### 1. Concept Hierarchies
@@ -28,12 +131,16 @@ Note → MeetingNote → ProjectMeetingNote
      → ResearchNote → LiteratureReview
 ```
 
+**Advantage over simple tags:** Formal class hierarchy enables automatic constraint inheritance and type checking.
+
 ### 2. Tag Taxonomies
 ```
 dev → rust → async
     → go → concurrency
     → web → frontend
 ```
+
+**Advantage over simple tags:** Machine-readable hierarchy enables automatic inference (e.g., dev/rust implies dev).
 
 ### 3. Relationship Types
 ```
@@ -42,12 +149,16 @@ hasAuthor (Note → Person)
 hasTag (Note → Tag)
 ```
 
+**Advantage over ad-hoc links:** Typed relationships with domain/range constraints prevent invalid connections.
+
 ### 4. Constraint Inheritance
 ```
 All Notes require: title, created, modified
 MeetingNotes additionally require: attendees, date
 ResearchNotes additionally require: sources, keywords
 ```
+
+**Advantage over duplicate validation:** Single definition of constraints that apply to all subclasses automatically.
 
 ## Ontology Approaches
 
