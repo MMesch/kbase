@@ -6,7 +6,7 @@
 
 ## Context
 
-This ADR selects a coherent technology stack for kg by crossing our research on:
+This ADR selects a coherent technology stack for kbase by crossing our research on:
 - [Languages](../research/languages.md)
 - [Graph Databases](../research/graph-databases.md)
 - [Validation](../research/validation.md)
@@ -17,6 +17,7 @@ This ADR selects a coherent technology stack for kg by crossing our research on:
 
 - **Viability**: Language must have mature database bindings
 - **Validation**: Stack must support chosen validation strategy
+- **Ontology**: Stack must support chosen ontology modeling approach
 - **Inference**: Stack must support needed inference capabilities
 - **Performance**: Meet CLI responsiveness requirements
 - **Maintainability**: Reasonable complexity and contributor accessibility
@@ -27,11 +28,11 @@ This ADR selects a coherent technology stack for kg by crossing our research on:
 
 ### Rust
 
-| Database | Query | Validation | Inference | Maturity |
-|----------|-------|------------|-----------|----------|
-| **Oxigraph** | SPARQL 1.1 | SHACL (rudof), SPARQL ASK | Property paths, RDFS | ✅ Production |
-| **CozoDB** | Datalog | Datalog constraints | Datalog rules | ✅ Production |
-| **CQLite** | Cypher | Custom only | Custom only | ⚠️ Pre-release |
+| Database | Query | Validation | Ontology | Inference | Maturity |
+|----------|-------|------------|----------|-----------|----------|
+| **Oxigraph** | SPARQL 1.1 | SHACL (rudof), SPARQL ASK | RDFS | Property paths, RDFS | ✅ Production |
+| **CozoDB** | Datalog | Datalog constraints | Custom | Datalog rules | ✅ Production |
+| **CQLite** | Cypher | Custom only | Custom only | Custom only | ⚠️ Pre-release |
 
 **Stack options**:
 1. **Rust + Oxigraph**: SPARQL ecosystem, SHACL validation, semantic web interop
@@ -42,13 +43,13 @@ This ADR selects a coherent technology stack for kg by crossing our research on:
 use oxigraph::store::Store;
 use oxigraph::sparql::QueryResults;
 
-let store = Store::open("kg.db")?;
-let results = store.query("SELECT ?note WHERE { ?note kg:hasTag kg:dev }")?;
+let store = Store::open("kbase.db")?;
+let results = store.query("SELECT ?note WHERE { ?note kbase:hasTag kbase:dev }")?;
 
 // Example: Rust + CozoDB
 use cozo::DbInstance;
 
-let db = DbInstance::new("rocksdb", "kg.db", "")?;
+let db = DbInstance::new("rocksdb", "kbase.db", "")?;
 let results = db.run_script("?[note] := *notes{id: note, tag: 'dev'}", Default::default())?;
 ```
 
@@ -56,11 +57,11 @@ let results = db.run_script("?[note] := *notes{id: note, tag: 'dev'}", Default::
 
 ### TypeScript / JavaScript
 
-| Database | Query | Validation | Inference | Maturity |
-|----------|-------|------------|-----------|----------|
-| **Quadstore** | SPARQL 1.1 | SHACL (rdf-validate-shacl) | Property paths | ✅ Production |
-| **CozoDB** | Datalog | Datalog constraints | Datalog rules | ✅ Production (WASM) |
-| **LevelGraph** | Custom API | Custom only | Custom only | ✅ Stable |
+| Database | Query | Validation | Ontology | Inference | Maturity |
+|----------|-------|------------|----------|-----------|----------|
+| **Quadstore** | SPARQL 1.1 | SHACL (rdf-validate-shacl) | RDFS | Property paths | ✅ Production |
+| **CozoDB** | Datalog | Datalog constraints | Custom | Datalog rules | ✅ Production (WASM) |
+| **LevelGraph** | Custom API | Custom only | Custom only | Custom only | ✅ Stable |
 
 **Stack options**:
 1. **TypeScript + Quadstore**: SPARQL, browser-ready, Obsidian-compatible
@@ -74,7 +75,7 @@ import { Engine } from '@comunica/query-sparql';
 const store = new Quadstore({ backend: levelDB });
 const engine = new Engine();
 const results = await engine.queryBindings(
-  `SELECT ?note WHERE { ?note kg:hasTag kg:dev }`,
+  `SELECT ?note WHERE { ?note kbase:hasTag kbase:dev }`,
   { sources: [store] }
 );
 
@@ -89,11 +90,11 @@ const results = await db.run("?[note] := *notes{id: note, tag: 'dev'}");
 
 ### Python
 
-| Database | Query | Validation | Inference | Maturity |
-|----------|-------|------------|-----------|----------|
-| **rdflib** | SPARQL 1.1 | SHACL (pyshacl), OWL (owlrl) | RDFS, OWL 2 RL | ✅ Production |
-| **Oxigraph** | SPARQL 1.1 | SHACL (pyshacl) | Property paths | ✅ Production |
-| **CozoDB** | Datalog | Datalog constraints | Datalog rules | ✅ Production |
+| Database | Query | Validation | Ontology | Inference | Maturity |
+|----------|-------|------------|----------|-----------|----------|
+| **rdflib** | SPARQL 1.1 | SHACL (pyshacl), OWL (owlrl) | OWL 2 | RDFS, OWL 2 RL | ✅ Production |
+| **Oxigraph** | SPARQL 1.1 | SHACL (pyshacl) | RDFS | Property paths | ✅ Production |
+| **CozoDB** | Datalog | Datalog constraints | Custom | Datalog rules | ✅ Production |
 
 **Stack options**:
 1. **Python + rdflib**: Full semantic web stack, rich inference
@@ -105,7 +106,7 @@ const results = await db.run("?[note] := *notes{id: note, tag: 'dev'}");
 from rdflib import Graph
 g = Graph()
 g.parse("notes.ttl")
-results = g.query("SELECT ?note WHERE { ?note kg:hasTag kg:dev }")
+results = g.query("SELECT ?note WHERE { ?note kbase:hasTag kbase:dev }")
 
 # Example: Python + CozoDB
 from cozo import Client
@@ -117,22 +118,22 @@ results = db.run("?[note] := *notes{id: note, tag: 'dev'}")
 
 ### Go
 
-| Database | Query | Validation | Inference | Maturity |
-|----------|-------|------------|-----------|----------|
-| **Cayley** | Gizmo | Custom only | Limited | ⚠️ Maintenance |
-| **Custom** | Custom | Custom only | Custom only | N/A |
+| Database | Query | Validation | Ontology | Inference | Maturity |
+|----------|-------|------------|----------|-----------|----------|
+| **Cayley** | Gizmo | Custom only | Custom only | Limited | ⚠️ Maintenance |
+| **Custom** | Custom | Custom only | Custom only | Custom only | N/A |
 
-**Assessment**: Go lacks mature embedded graph database options. Not recommended for kg.
+**Assessment**: Go lacks mature embedded graph database options. Not recommended for kbase.
 
 ---
 
 ### Haskell
 
-| Database | Query | Validation | Inference | Maturity |
-|----------|-------|------------|-----------|----------|
-| **rdf4h** | In-memory | Custom only | Custom only | ⚠️ Limited |
+| Database | Query | Validation | Ontology | Inference | Maturity |
+|----------|-------|------------|----------|-----------|----------|
+| **rdf4h** | In-memory | Custom only | Custom only | Custom only | ⚠️ Limited |
 
-**Assessment**: Haskell lacks embedded persistent graph databases. Not recommended for kg.
+**Assessment**: Haskell lacks embedded persistent graph databases. Not recommended for kbase.
 
 ---
 
