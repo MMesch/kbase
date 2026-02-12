@@ -1,10 +1,10 @@
 # Contract: Note Format
 
-**Status**: Draft
+**Status**: ✅ Complete | **Implementation**: ❌ Not Started
 
 ## Purpose
 
-Defines the structure and constraints of a kg note file, ensuring Obsidian compatibility while supporting kg's typed schema system.
+Defines the structure and constraints of a kbase note file, ensuring Obsidian compatibility while supporting kbase's typed schema system.
 
 ## File Naming
 

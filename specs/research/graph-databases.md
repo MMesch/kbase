@@ -1,6 +1,6 @@
 # Graph Databases
 
-Research on embedded graph database options for kg. Evaluates query paradigms, capabilities, and database candidates.
+Research on embedded graph database options for kbase. Evaluates query paradigms, capabilities, and database candidates.
 
 See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
 
@@ -11,7 +11,7 @@ See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
 - **Performance**: Handle 10,000+ notes, sub-second queries
 - **Query power**: Backlinks, recursive tag queries, path traversal
 - **Maturity**: Stable enough for production use
-- **Single binary**: Compiles/bundles into kg
+- **Single binary**: Compiles/bundles into kbase
 
 ## Query Paradigms
 
@@ -20,10 +20,10 @@ W3C standard for querying RDF data. Subject-predicate-object triples.
 
 ```sparql
 # Find notes linking to target
-PREFIX kg: <http://kg.local/>
+PREFIX kbase: <http://kbase.local/>
 SELECT ?note ?title WHERE {
-  ?note kg:linksTo kg:note/abc123 .
-  ?note kg:title ?title .
+  ?note kbase:linksTo kbase:note/abc123 .
+  ?note kbase:title ?title .
 }
 ```
 
@@ -101,18 +101,18 @@ For detailed language × database combinations, see **ADR-005: Stack Decision**.
 
 ```sparql
 # Backlinks query
-PREFIX kg: <http://kg.local/>
+PREFIX kbase: <http://kbase.local/>
 SELECT ?source ?title WHERE {
-  ?source kg:linksTo <http://kg.local/note/a1b2c3> .
-  ?source kg:title ?title .
+  ?source kbase:linksTo <http://kbase.local/note/a1b2c3> .
+  ?source kbase:title ?title .
 }
 
 # Recursive tag descendants (property paths)
-PREFIX kg: <http://kg.local/>
+PREFIX kbase: <http://kbase.local/>
 SELECT DISTINCT ?note ?title WHERE {
-  ?tag kg:parentTag* <http://kg.local/tag/dev> .
-  ?note kg:hasTag ?tag .
-  ?note kg:title ?title .
+  ?tag kbase:parentTag* <http://kbase.local/tag/dev> .
+  ?note kbase:hasTag ?tag .
+  ?note kbase:title ?title .
 }
 ```
 
@@ -154,10 +154,10 @@ const store = new Quadstore({ backend: levelDB });
 const engine = new Engine();
 
 const result = await engine.queryBindings(`
-  PREFIX kg: <http://kg.local/>
+  PREFIX kbase: <http://kbase.local/>
   SELECT ?source ?title WHERE {
-    ?source kg:linksTo <http://kg.local/note/a1b2c3> .
-    ?source kg:title ?title .
+    ?source kbase:linksTo <http://kbase.local/note/a1b2c3> .
+    ?source kbase:title ?title .
   }
 `, { sources: [store] });
 ```

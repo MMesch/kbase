@@ -1,12 +1,12 @@
 # Validation Strategies
 
-Research on validation approaches for kg note frontmatter and graph constraints.
+Research on validation approaches for kbase note frontmatter and graph constraints.
 
 See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
 
 ## Requirements
 
-kg notes have structured frontmatter (YAML) that must conform to a schema:
+kbase notes have structured frontmatter (YAML) that must conform to a schema:
 - Enforce required fields (title, created, modified)
 - Validate field types (string, datetime, list)
 - Check constraints (tag hierarchy rules, link integrity)
@@ -36,20 +36,20 @@ kg notes have structured frontmatter (YAML) that must conform to a schema:
 **Example** (note shape):
 ```turtle
 @prefix sh: <http://www.w3.org/ns/shacl#> .
-@prefix kg: <http://kg.local/> .
+@prefix kbase: <http://kbase.local/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-kg:NoteShape a sh:NodeShape ;
-    sh:targetClass kg:Note ;
+kbase:NoteShape a sh:NodeShape ;
+    sh:targetClass kbase:Note ;
     sh:property [
-        sh:path kg:title ;
+        sh:path kbase:title ;
         sh:datatype xsd:string ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:message "Note must have exactly one title" ;
     ] ;
     sh:property [
-        sh:path kg:created ;
+        sh:path kbase:created ;
         sh:datatype xsd:dateTime ;
         sh:minCount 1 ;
         sh:message "Note must have a created timestamp" ;
@@ -122,16 +122,16 @@ violation[tag, "cyclic tag hierarchy"] :=
 ```sparql
 # Check: Note has title
 ASK WHERE {
-    <http://kg.local/note/abc123> a kg:Note .
+    <http://kbase.local/note/abc123> a kbase:Note .
     FILTER NOT EXISTS {
-        <http://kg.local/note/abc123> kg:title ?title .
+        <http://kbase.local/note/abc123> kbase:title ?title .
     }
 }
 # Returns true if violation exists
 
 # Check: No cyclic tags
 ASK WHERE {
-    ?tag kg:parentTag+ ?tag .
+    ?tag kbase:parentTag+ ?tag .
 }
 # Returns true if cycle exists
 ```
@@ -314,6 +314,12 @@ This gives us:
 - [Graph Databases](./graph-databases.md)
 - [Ontology](./ontology.md)
 - [Inference](./inference.md)
+
+## Related Specifications
+
+- [PRODUCT.md](../PRODUCT.md): Overall product vision and requirements
+- [note-format.md](../contracts/note-format.md): Note file structure specification
+- [metadata-graph.md](../features/metadata-graph.md): Graph data model and queries
 
 ## References
 

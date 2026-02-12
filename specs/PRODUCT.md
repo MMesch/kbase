@@ -1,5 +1,7 @@
 # Product Specification: kbase
 
+**Status**: ✅ Complete | **Implementation**: ❌ Not Started
+
 ## Vision
 
 **kbase** (Knowledge Base) is a CLI-first knowledge base management tool that stores notes as Markdown files with typed frontmatter, backed by an embedded graph database.
