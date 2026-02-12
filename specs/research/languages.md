@@ -188,4 +188,5 @@ See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
 
 - [Graph Databases](./graph-databases.md)
 - [Validation](./validation.md)
-- [Ontology & Inference](./ontology-inference.md)
+- [Ontology](./ontology.md)
+- [Inference](./inference.md)

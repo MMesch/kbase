@@ -71,42 +71,7 @@ kg:NoteShape a sh:NodeShape ;
 
 ---
 
-### Option 2: OWL (Web Ontology Language)
-
-**Description**: W3C standard for defining ontologies with reasoning capabilities. Can infer relationships and validate class memberships.
-
-**Availability**:
-- Rust: `horned-owl` (OWL 2 processing), `reasonable` (OWL 2 RL reasoning)
-- TypeScript: Limited, mostly via external reasoners
-- Go/Haskell: Very limited
-
-**Example** (tag hierarchy inference):
-```turtle
-@prefix owl: <http://www.w3.org/2002/07/owl#> .
-@prefix kg: <http://kg.local/> .
-
-kg:Tag a owl:Class .
-kg:parentTag a owl:TransitiveProperty ;
-    rdfs:domain kg:Tag ;
-    rdfs:range kg:Tag .
-
-# Inference: If A parentTag B and B parentTag C, then A parentTag C
-```
-
-**Pros**:
-- Can infer implicit relationships (tag ancestors)
-- Rich expressiveness for ontology modeling
-- Standard format for knowledge representation
-
-**Cons**:
-- Heavy dependency (reasoner)
-- Performance concerns for large graphs
-- Overkill for validation (better for inference)
-- Steep learning curve
-
----
-
-### Option 3: Datalog Constraints
+### Option 2: Datalog Constraints
 
 **Description**: Use Datalog rules to express and check constraints. Natural fit for CozoDB.
 
@@ -303,7 +268,6 @@ Note input
 | Validation | Best with Database |
 |------------|-------------------|
 | SHACL | Oxigraph, Quadstore (RDF stores) |
-| OWL | Oxigraph + reasoner |
 | Datalog | CozoDB |
 | SPARQL ASK | Any SPARQL engine |
 | Custom | Any |
@@ -348,12 +312,12 @@ This gives us:
 
 - [Languages](./languages.md)
 - [Graph Databases](./graph-databases.md)
-- [Ontology & Inference](./ontology-inference.md)
+- [Ontology](./ontology.md)
+- [Inference](./inference.md)
 
 ## References
 
 - [SHACL W3C Specification](https://www.w3.org/TR/shacl/)
-- [OWL 2 Web Ontology Language](https://www.w3.org/TR/owl2-overview/)
 - [Rudof - Rust RDF Shapes](https://github.com/rudof-project/rudof)
 - [CozoDB Constraints](https://docs.cozodb.org/)
 - [JSON Schema](https://json-schema.org/)

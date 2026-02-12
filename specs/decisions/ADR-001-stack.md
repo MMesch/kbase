@@ -10,7 +10,8 @@ This ADR selects a coherent technology stack for kg by crossing our research on:
 - [Languages](../research/languages.md)
 - [Graph Databases](../research/graph-databases.md)
 - [Validation](../research/validation.md)
-- [Ontology & Inference](../research/ontology-inference.md)
+- [Ontology](../research/ontology.md)
+- [Inference](../research/inference.md)
 
 ## Decision Drivers
 
@@ -266,7 +267,8 @@ Build minimal prototypes for top candidates:
 - [Languages](../research/languages.md)
 - [Graph Databases](../research/graph-databases.md)
 - [Validation](../research/validation.md)
-- [Ontology & Inference](../research/ontology-inference.md)
+- [Ontology](../research/ontology.md)
+- [Inference](../research/inference.md)
 
 **Specs:**
 - [PRODUCT.md](../PRODUCT.md): Product requirements

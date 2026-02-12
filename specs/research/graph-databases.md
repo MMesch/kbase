@@ -218,4 +218,5 @@ For each viable language × database combination:
 
 - [Languages](./languages.md)
 - [Validation](./validation.md)
-- [Ontology & Inference](./ontology-inference.md)
+- [Ontology](./ontology.md)
+- [Inference](./inference.md)
