@@ -15,6 +15,25 @@ A CLI-first knowledge base management tool with graph-powered relationships.
 
 This project uses **Spec-Driven Development (SDD)**: specifications are the source of truth, implementation follows.
 
+### Development Environment
+
+Use Nix flake for reproducible development:
+
+```bash
+# Enter development shell
+nix develop
+
+# Or with direenv (recommended)
+echo "use flake" > .envrc
+direnv allow
+```
+
+The environment includes:
+- Rust toolchain (rustc, cargo, rust-analyzer)
+- TypeScript/Deno
+- Benchmarking tools (hyperfine)
+- Core utilities
+
 ## Project Structure
 
 ```
