@@ -39,11 +39,17 @@ tags: [dev/rust, dev/go]
 dev:rust rdfs:subClassOf dev: .
 dev:go rdfs:subClassOf dev: .
 ```
-- Formal class hierarchy with defined semantics
-- Machine-readable relationships
-- Enables automatic reasoning (inference)
+- **Formal class hierarchy**: This Turtle syntax (RDF format) formally defines that `dev:rust` is a subclass of `dev:`
+- **Machine-readable relationships**: Computers understand this isn't just a string, but a semantic relationship
+- **Automatic reasoning**: If a note is tagged `dev/rust`, the system automatically knows it's also `dev`
+- **Example**: Querying for all `dev` notes will automatically include `dev/rust` and `dev/go` notes
+- **Contrast with simple tags**: Without ontologies, you'd need manual string parsing or recursive queries to achieve this
 
 ### 2. Constraint Inheritance vs. Duplicate Validation
+
+**Term Definitions:**
+- **Constraint Inheritance**: Rules defined for parent classes automatically apply to child classes
+- **Duplicate Validation**: Having to repeat the same validation rules for multiple similar types
 
 **Simple Validation (Duplicate Rules):**
 ```yaml
@@ -60,9 +66,14 @@ kbase:MeetingNote rdfs:subClassOf kbase:Note .
 kbase:Note kbase:requires kbase:title, kbase:created, kbase:modified .
 kbase:MeetingNote kbase:requires kbase:attendees, kbase:date .
 ```
-- Constraints inherited automatically
-- No duplication
-- Easier maintenance
+- **Constraints inherited automatically**: `MeetingNote` gets all `Note` requirements plus its own
+- **No duplication**: Define requirements once for parent class
+- **Easier maintenance**: Change parent class constraints, all children update automatically
+
+**Composition vs Inheritance:**
+- **Inheritance (shown)**: Child classes extend parent classes (`MeetingNote` is-a `Note`)
+- **Composition**: Classes combine multiple components (like typeclasses)
+- **Ontologies support both**: Can use inheritance for hierarchies and composition for modular design
 
 ### 3. Relationship Typing vs. Ad-Hoc Links
 
@@ -133,6 +144,22 @@ Note → MeetingNote → ProjectMeetingNote
 
 **Advantage over simple tags:** Formal class hierarchy enables automatic constraint inheritance and type checking.
 
+**Detailed Example:**
+```turtle
+# Define base Note requirements
+kbase:Note kbase:requires kbase:title, kbase:created, kbase:modified .
+
+# MeetingNote inherits Note requirements AND adds its own
+kbase:MeetingNote rdfs:subClassOf kbase:Note .
+kbase:MeetingNote kbase:requires kbase:attendees, kbase:date .
+
+# Result: MeetingNotes automatically require:
+# title, created, modified (inherited from Note)
+# attendees, date (specific to MeetingNote)
+```
+
+**Without ontologies**: You'd need to list all 5 requirements for every note type, leading to duplication and maintenance issues.
+
 ### 2. Tag Taxonomies
 ```
 dev → rust → async
@@ -141,6 +168,28 @@ dev → rust → async
 ```
 
 **Advantage over simple tags:** Machine-readable hierarchy enables automatic inference (e.g., dev/rust implies dev).
+
+**Graph Query vs Ontology Inference:**
+
+**With Simple Graph Queries:**
+```sparql
+# Manual recursive query needed
+SELECT ?note WHERE {
+  ?note kg:hasTag kg:dev/rust .
+  # Would need UNION with dev/go, dev/web, etc.
+}
+```
+
+**With Ontology Inference:**
+```sparql
+# Automatic - system knows dev/rust implies dev
+SELECT ?note WHERE {
+  ?note kg:hasTag kg:dev .
+  # Automatically includes dev/rust, dev/go, etc.
+}
+```
+
+**Key Difference**: Ontologies handle the hierarchy logic automatically, while simple queries require manual specification of all cases.
 
 ### 3. Relationship Types
 ```
