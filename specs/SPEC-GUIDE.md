@@ -17,6 +17,7 @@ Feature specifications (one per feature):
 - [note-crud.md](features/note-crud.md) - Create, read, update, delete notes
 - [search-query.md](features/search-query.md) - Search and query capabilities
 - [metadata-graph.md](features/metadata-graph.md) - Graph operations and queries
+- [lsp-server.md](features/lsp-server.md) - Editor integration (completion, validation, navigation)
 
 ### Research
 Exploration and analysis (not decisions):
