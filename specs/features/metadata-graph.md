@@ -6,7 +6,7 @@ All note metadata forms a unified graph where notes are subjects, field names ar
 
 ## Core Concept
 
-Every frontmatter field becomes a graph edge:
+Every frontmatter field becomes a triple (subject-predicate-object):
 
 ```
 Note (subject) --[field name]--> Value (object)
@@ -35,6 +35,8 @@ note:a1b2c3 --hasTag--> tag:dev/rust
 note:a1b2c3 --hasTag--> tag:learning
 note:a1b2c3 --related--> note:project-abc
 ```
+
+This RDF-style triple model provides a uniform representation for all metadata, enabling standard query languages (SPARQL) and validation frameworks (SHACL).
 
 ## Behavior
 
@@ -237,14 +239,16 @@ published/
 
 ## Data Model
 
-### Triples Table
+### Triple Store
 
-All metadata stored as subject-predicate-object triples:
+All metadata is stored as subject-predicate-object triples:
 
 | subject | predicate | object | object_type |
 |---------|-----------|--------|-------------|
 | note:a1b2c3 | title | "Learning Rust" | literal |
 | note:a1b2c3 | author | "Alice" | literal |
+| note:a1b2c3 | status | "draft" | literal |
+| note:a1b2c3 | created | "2026-01-15" | literal |
 | note:a1b2c3 | hasTag | tag:dev/rust | node |
 | note:a1b2c3 | linksTo | note:d4e5f6 | node |
 | tag:dev/rust | parentTag | tag:dev | node |
@@ -267,6 +271,17 @@ All metadata stored as subject-predicate-object triples:
 | `linksTo` | Explicit link to another note |
 
 User-defined fields become custom predicates.
+
+### Indexing
+
+Triples are indexed for efficient queries:
+
+| Index | Purpose | Example Query |
+|-------|---------|---------------|
+| `(predicate, object)` | Find subjects by field value | `author = "Alice"` |
+| `(subject, predicate)` | Get field value for a note | `note.title` |
+| `(object)` where type=node | Reverse lookups | "notes linking to X" |
+| Full-text on literals | Contains search | `title~=rust` |
 
 ---
 
@@ -330,12 +345,78 @@ kg tags descendants dev            # show all tags under dev
 
 - Every note MUST be a subject in the graph
 - Tags MUST form valid trees (no cycles)
-- Field names (predicates) MUST be valid identifiers
+- Predicate names MUST be valid identifiers
 - Deleting a note removes all its triples
 - Renaming a tag updates all references
 
 ## Open Questions
 
-- [ ] Should non-tag fields also support hierarchies? (e.g., `author/team/alice`)
-- [ ] Index strategy for literal values vs node references
-- [ ] How to handle field value types in the graph (dates, numbers)?
+### Should non-tag fields support hierarchies?
+
+**Short answer**: No. Only tags have enforced hierarchy.
+
+**Why not?** Hierarchical values like `author/team/alice` imply alice belongs to exactly one team. But real relationships aren't always trees - alice might be in multiple teams, or team membership might change over time.
+
+**Recommendation**:
+- **Tags**: Enforced tree hierarchy with recursive queries (`kg list dev` finds all descendants)
+- **Other fields**: Flat values only. Use `/` in values if you want, but it's just a string - no hierarchy semantics
+
+**For complex relationships**, use explicit edges instead of hierarchical values:
+
+```yaml
+# Alice in multiple teams - just use multiple values:
+author: alice
+teams:
+  - backend
+  - platform
+```
+
+This creates multiple triples:
+```
+note:x --author--> "alice"
+note:x --teams--> "backend"
+note:x --teams--> "platform"
+```
+
+Or model authors as nodes for richer queries:
+```yaml
+author: "[[people/alice]]"  # links to a person note
+```
+
+The triple model naturally handles multi-valued fields - no hierarchy enforcement needed.
+
+### How to handle field value types?
+
+Since we use the triple model, validation uses **SHACL** (Shapes Constraint Language) - the W3C standard for RDF validation. See [validation.md](../research/validation.md) for full approach.
+
+```turtle
+# .kbase/shapes.ttl
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix kg: <http://kbase.local/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+kg:NoteShape a sh:NodeShape ;
+  sh:targetClass kg:Note ;
+  sh:property [
+    sh:path kg:title ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path kg:created ;
+    sh:datatype xsd:date ;
+  ] ;
+  sh:property [
+    sh:path kg:priority ;
+    sh:datatype xsd:integer ;
+    sh:minInclusive 1 ;
+    sh:maxInclusive 5 ;
+  ] .
+```
+
+Validation runs on:
+- Note creation/modification
+- Import operations
+- Explicit `kg validate` command
+
+Invalid values produce warnings (not errors by default) to avoid blocking workflows.
