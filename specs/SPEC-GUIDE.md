@@ -2,40 +2,62 @@
 
 This project follows **Spec-Driven Development (SDD)**: specifications are the source of truth, code is derived from them.
 
-## Directory Structure
+## Reading Order and Structure
 
-```
-specs/
-├── SPEC-GUIDE.md          # This file - how to write specs
-├── PRODUCT.md             # High-level product vision and requirements
-├── features/              # Feature specifications (one per feature)
-│   └── *.md
-├── contracts/             # Interface contracts, data schemas, plugin APIs
-│   └── *.md
-├── research/              # Exploration and analysis (NOT decisions)
-│   └── *.md
-└── decisions/             # Architecture Decision Records (ADRs)
-    └── ADR-NNN-*.md
-```
+Start with [PRODUCT.md](PRODUCT.md) for the overall vision, then explore by category:
 
-## Research vs Decisions
+### Contracts
+Data schemas and interface definitions:
+- [note-format.md](contracts/note-format.md) - Note file format specification
+- [plugin-api.md](contracts/plugin-api.md) - Extension points (future)
 
-**Research documents** (`specs/research/`) contain exploration and analysis:
+### Features
+Feature specifications (one per feature):
+- [vault-init.md](features/vault-init.md) - Vault initialization
+- [note-crud.md](features/note-crud.md) - Create, read, update, delete notes
+- [search-query.md](features/search-query.md) - Search and query capabilities
+- [metadata-graph.md](features/metadata-graph.md) - Graph operations and queries
+
+### Research
+Exploration and analysis (not decisions):
+- [ontology.md](research/ontology.md) - Ontology modeling approaches
+- [inference.md](research/inference.md) - Inference strategies
+- [validation.md](research/validation.md) - Validation approaches
+- [languages.md](research/languages.md) - Language options analysis
+- [graph-databases.md](research/graph-databases.md) - Database options comparison
+
+### Decisions
+- [decision-001-stack.md](decisions/decision-001-stack.md) - Technology stack decision
+
+---
+
+## Folder Purposes
+
+**Contracts** (`specs/contracts/`) define interfaces and data schemas:
+- File formats, API contracts, plugin interfaces
+- Precise, versioned specifications
+- Focus on structure and validation rules
+
+**Features** (`specs/features/`) describe user-facing functionality:
+- One file per feature
+- Behavior-focused with scenarios (Given/When/Then)
+- What the system does, not how it's implemented
+
+**Research** (`specs/research/`) contains exploration and analysis:
 - Evaluate options without committing to a choice
 - Compare tradeoffs, list pros/cons
 - Living documents that evolve as we learn more
-- NOT numbered, can be freely edited
 
-**Decision records** (`specs/decisions/`) capture actual choices:
-- Record a decision that has been made (or is being made)
-- Numbered sequentially (ADR-001, ADR-002, ...)
+**Decisions** (`specs/decisions/`) capture actual choices:
+- Record a decision that has been made
+- Numbered sequentially (decision-001, decision-002, ...)
 - Reference research docs for supporting analysis
 - Immutable once accepted (supersede rather than edit)
 
 **Example flow:**
 1. Create `research/databases.md` to explore database options
 2. Create `research/languages.md` to explore language options
-3. When ready to decide, create `ADR-001-stack.md` that references both
+3. When ready to decide, create `decision-001-stack.md` that references both
 
 ---
 
@@ -100,14 +122,13 @@ Rules that must always hold true.
 How this contract evolves over time.
 ```
 
-### ADR (Architecture Decision Record) Template
+### Decision Template
 
 ```markdown
-# ADR-NNN: [Title]
+# Decision NNN: [Title]
 
-**Status**: [Proposed | Accepted | Deprecated | Superseded by ADR-XXX]
+**Status**: [Proposed | Accepted | Deprecated | Superseded by decision-XXX]
 **Date**: YYYY-MM-DD
-**Deciders**: [List of people involved]
 
 ## Context
 What is the issue that we're seeing that is motivating this decision?
@@ -126,7 +147,7 @@ We will use **[chosen option]** because [rationale].
 - [Tradeoff 2]
 
 ## Related
-- Links to research docs, other ADRs, or specs
+- Links to research docs, other decisions, or specs
 ```
 
 ---
@@ -135,7 +156,7 @@ We will use **[chosen option]** because [rationale].
 
 1. **Discover** → Write/refine specs through discussion
 2. **Research** → Explore options in `research/` docs
-3. **Decide** → Record choices in `decisions/` ADRs
+3. **Decide** → Record choices in `decisions/`
 4. **Implement** → Generate/write code from specs
 5. **Validate** → Tests verify spec compliance
 6. **Iterate** → Specs evolve, code follows

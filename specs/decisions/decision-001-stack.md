@@ -1,12 +1,11 @@
-# ADR-001: Technology Stack
+# Decision 001: Technology Stack
 
 **Status**: Evaluating
 **Date**: 2026-02-12
-**Deciders**: TBD
 
 ## Context
 
-This ADR selects a coherent technology stack for kbase by crossing our research on:
+This decision selects a coherent technology stack for kbase by crossing our research on:
 - [Languages](../research/languages.md)
 - [Graph Databases](../research/graph-databases.md)
 - [Validation](../research/validation.md)
