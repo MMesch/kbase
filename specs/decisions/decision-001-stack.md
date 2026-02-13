@@ -1,6 +1,11 @@
+---
+title: Technology Stack
+tags:
+  - spec/decision
+status: evaluating
+---
 # Decision 001: Technology Stack
 
-**Status**: Evaluating
 **Date**: 2026-02-12
 
 ## Context

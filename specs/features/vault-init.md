@@ -1,3 +1,9 @@
+---
+title: Vault Initialization
+tags:
+  - spec/feature
+status: complete
+---
 # Feature: Vault Initialization
 
 ## Purpose

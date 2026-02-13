@@ -1,8 +1,14 @@
+---
+title: Inference Strategies
+tags:
+  - spec/research
+status: complete
+---
 # Inference Strategies
 
 Research on inference approaches for deriving new knowledge from existing data in kbase.
 
-See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
+See: [Decision 001: Stack Decision](../decisions/decision-001-stack.md)
 
 ## Overview
 

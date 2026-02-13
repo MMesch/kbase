@@ -1,8 +1,14 @@
+---
+title: Programming Languages
+tags:
+  - spec/research
+status: complete
+---
 # Programming Languages
 
 Research on programming language options for kg. This document evaluates languages on their own merits. The final stack decision combines this with database, validation, and inference research.
 
-See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
+See: [Decision 001: Stack Decision](../decisions/decision-001-stack.md)
 
 ## Evaluation Criteria
 

@@ -1,3 +1,9 @@
+---
+title: Note CRUD Operations
+tags:
+  - spec/feature
+status: complete
+---
 # Feature: Note CRUD Operations
 
 ## Purpose

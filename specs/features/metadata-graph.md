@@ -1,3 +1,9 @@
+---
+title: Metadata as Graph
+tags:
+  - spec/feature
+status: complete
+---
 # Feature: Metadata as Graph
 
 ## Purpose

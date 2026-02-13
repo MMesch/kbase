@@ -1,3 +1,9 @@
+---
+title: LSP Server
+tags:
+  - spec/feature
+status: complete
+---
 # Feature: LSP Server
 
 ## Purpose

@@ -1,6 +1,10 @@
+---
+title: Product Specification
+tags:
+  - spec/product
+status: complete
+---
 # Product Specification: kbase
-
-**Status**: ✅ Complete | **Implementation**: ❌ Not Started
 
 ## Vision
 

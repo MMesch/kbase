@@ -1,3 +1,9 @@
+---
+title: Search and Query
+tags:
+  - spec/feature
+status: complete
+---
 # Feature: Search and Query
 
 ## Purpose

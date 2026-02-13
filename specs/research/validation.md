@@ -1,8 +1,14 @@
+---
+title: Validation Strategies
+tags:
+  - spec/research
+status: complete
+---
 # Validation Strategies
 
 Research on validation approaches for kbase note frontmatter and graph constraints.
 
-See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
+See: [Decision 001: Stack Decision](../decisions/decision-001-stack.md)
 
 ## Requirements
 

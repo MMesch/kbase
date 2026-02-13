@@ -1,6 +1,10 @@
+---
+title: Note Format
+tags:
+  - spec/contract
+status: complete
+---
 # Contract: Note Format
-
-**Status**: ✅ Complete | **Implementation**: ❌ Not Started
 
 ## Purpose
 

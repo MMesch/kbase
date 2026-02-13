@@ -1,6 +1,10 @@
+---
+title: Plugin API
+tags:
+  - spec/contract
+status: deferred
+---
 # Contract: Plugin API
-
-**Status**: Deferred (v2 scope)
 
 ## Purpose
 

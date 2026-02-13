@@ -1,8 +1,14 @@
+---
+title: Graph Databases
+tags:
+  - spec/research
+status: complete
+---
 # Graph Databases
 
 Research on embedded graph database options for kbase. Evaluates query paradigms, capabilities, and database candidates.
 
-See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
+See: [Decision 001: Stack Decision](../decisions/decision-001-stack.md)
 
 ## Requirements
 

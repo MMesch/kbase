@@ -1,8 +1,14 @@
+---
+title: Ontology Modeling
+tags:
+  - spec/research
+status: complete
+---
 # Ontology Modeling
 
 Research on ontology approaches for kbase knowledge representation and organization.
 
-See: [ADR-001: Stack Decision](../decisions/ADR-001-stack.md)
+See: [Decision 001: Stack Decision](../decisions/decision-001-stack.md)
 
 ## Overview
 

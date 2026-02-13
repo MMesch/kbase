@@ -1,3 +1,9 @@
+---
+title: Specification Guide
+tags:
+  - spec/guide
+status: complete
+---
 # Specification Guide
 
 This project follows **Spec-Driven Development (SDD)**: specifications are the source of truth, code is derived from them.
