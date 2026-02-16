@@ -22,6 +22,8 @@
           # Rust ecosystem
           rustc
           cargo
+          clippy
+          rustfmt
           rust-analyzer
 
           # Build dependencies

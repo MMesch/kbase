@@ -2,10 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-mod config;
-mod note;
-mod store;
-mod vault;
+use kbase::{note, vault};
 
 #[derive(Parser)]
 #[command(name = "kbase")]

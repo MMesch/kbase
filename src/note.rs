@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -31,8 +31,8 @@ struct Frontmatter {
 
 /// Parse a markdown file into a Note
 pub fn parse(path: &Path, link_syntax: LinkSyntax) -> Result<Note> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
 
     let (frontmatter, body) = split_frontmatter(&content)?;
 
@@ -92,7 +92,8 @@ fn split_frontmatter(content: &str) -> Result<(String, String)> {
     }
 
     let rest = &content[3..];
-    let end = rest.find("\n---")
+    let end = rest
+        .find("\n---")
         .ok_or_else(|| anyhow::anyhow!("Frontmatter not closed (missing ---)"))?;
 
     let frontmatter = rest[..end].trim().to_string();
@@ -145,4 +146,72 @@ fn slugify(s: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugify_basic() {
+        assert_eq!(slugify("Hello World"), "hello-world");
+        assert_eq!(slugify("My Note!"), "my-note");
+        assert_eq!(slugify("test"), "test");
+    }
+
+    #[test]
+    fn slugify_special_chars() {
+        assert_eq!(slugify("What's this?"), "what-s-this");
+        assert_eq!(slugify("foo--bar"), "foo-bar");
+        assert_eq!(slugify("  spaces  "), "spaces");
+    }
+
+    #[test]
+    fn extract_wiki_links() {
+        let body = "See [[Note A]] and [[Note B]]";
+        let links = extract_links(body, LinkSyntax::Wiki);
+        assert_eq!(links, vec!["Note A", "Note B"]);
+    }
+
+    #[test]
+    fn extract_wiki_links_with_alias() {
+        let body = "See [[Target|display text]]";
+        let links = extract_links(body, LinkSyntax::Wiki);
+        assert_eq!(links, vec!["Target"]);
+    }
+
+    #[test]
+    fn extract_markdown_links() {
+        let body = "See [note](path/to/note.md) and [other](other.md)";
+        let links = extract_links(body, LinkSyntax::Markdown);
+        assert_eq!(links, vec!["path/to/note.md", "other.md"]);
+    }
+
+    #[test]
+    fn extract_markdown_links_skips_external() {
+        let body = "See [google](https://google.com) and [note](note.md)";
+        let links = extract_links(body, LinkSyntax::Markdown);
+        assert_eq!(links, vec!["note.md"]);
+    }
+
+    #[test]
+    fn extract_both_syntaxes() {
+        let body = "Wiki [[Note A]] and markdown [text](note.md)";
+        let links = extract_links(body, LinkSyntax::Both);
+        assert_eq!(links, vec!["Note A", "note.md"]);
+    }
+
+    #[test]
+    fn split_frontmatter_basic() {
+        let content = "---\ntitle: Test\n---\nBody here";
+        let (fm, body) = split_frontmatter(content).unwrap();
+        assert_eq!(fm, "title: Test");
+        assert_eq!(body, "\nBody here");
+    }
+
+    #[test]
+    fn split_frontmatter_missing() {
+        let content = "No frontmatter here";
+        assert!(split_frontmatter(content).is_err());
+    }
 }

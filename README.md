@@ -29,10 +29,19 @@ direnv allow
 ```
 
 The environment includes:
-- Rust toolchain (rustc, cargo, rust-analyzer)
+- Rust toolchain (rustc, cargo, clippy, rustfmt, rust-analyzer)
 - TypeScript/Deno
-- Benchmarking tools (hyperfine)
 - Core utilities
+
+### Development Commands
+
+```bash
+cargo build              # Build the project
+cargo test               # Run all tests (unit + integration)
+cargo clippy             # Run linter
+cargo fmt                # Format code
+cargo fmt --check        # Check formatting without changes
+```
 
 ## Project Structure
 

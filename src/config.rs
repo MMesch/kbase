@@ -7,9 +7,9 @@ use std::path::Path;
 #[serde(rename_all = "lowercase")]
 pub enum LinkSyntax {
     #[default]
-    Wiki,      // [[target]]
-    Markdown,  // [text](path)
-    Both,      // recognize both
+    Wiki, // [[target]]
+    Markdown, // [text](path)
+    Both,     // recognize both
 }
 
 #[derive(Debug, Deserialize, Serialize)]

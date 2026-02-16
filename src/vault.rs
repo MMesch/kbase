@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -50,10 +50,10 @@ pub fn load(vault_path: &Path) -> Result<Store> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.extension().is_some_and(|ext| ext == "md") {
-            if let Ok(parsed) = note::parse(path, config.link_syntax) {
-                store.upsert_note(&parsed)?;
-            }
+        if path.extension().is_some_and(|ext| ext == "md")
+            && let Ok(parsed) = note::parse(path, config.link_syntax)
+        {
+            store.upsert_note(&parsed)?;
         }
     }
 
