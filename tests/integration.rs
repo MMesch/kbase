@@ -151,3 +151,28 @@ fn store_handles_empty_tag_filter() {
 
     assert!(notes.is_empty(), "Should have no notes for nonexistent tag");
 }
+
+#[test]
+fn list_tags_returns_tree() {
+    let vault_path = specs_path();
+    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+
+    let tree = store.list_tags().expect("Failed to list tags");
+
+    // Should have some tags
+    assert!(!tree.is_empty(), "Should have tags");
+
+    // Should have spec as a root tag
+    assert!(
+        tree.iter().any(|line| line == "spec"),
+        "Should have 'spec' root tag, got: {:?}",
+        tree
+    );
+
+    // Should have child tags with tree formatting
+    assert!(
+        tree.iter().any(|line| line.contains("feature")),
+        "Should have 'feature' child tag, got: {:?}",
+        tree
+    );
+}
