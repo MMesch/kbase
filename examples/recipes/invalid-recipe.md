@@ -3,6 +3,7 @@ title: Invalid Recipe
 tags: []
 difficulty: extreme
 status: unknown
+created: not-a-date
 ---
 # Invalid Recipe
 

@@ -29,6 +29,8 @@
           # Build dependencies
           clang
           libclang.lib
+          openssl
+          pkg-config
 
           # TypeScript/Deno ecosystem
           deno

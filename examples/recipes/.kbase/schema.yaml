@@ -9,3 +9,15 @@ fields:
   status:
     type: enum
     values: [draft, tested, favorite]
+  created:
+    type: date
+
+constraints:
+  - name: cuisine-recipes-have-links
+    message: "Cuisine recipe should link to other recipes"
+    query: |
+      FILTER EXISTS {
+        ?note kb:hasTag ?tag .
+        ?tag kb:parentTag* <http://kbase.local/tag/cuisine> .
+      }
+      FILTER NOT EXISTS { ?note kb:linksTo ?link }

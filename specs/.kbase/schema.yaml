@@ -1,0 +1,8 @@
+required:
+  - title
+  - tags
+
+fields:
+  status:
+    type: enum
+    values: [draft, evaluating, complete, deferred]

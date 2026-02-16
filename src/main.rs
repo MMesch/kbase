@@ -102,10 +102,22 @@ fn main() -> Result<()> {
             let notes = vault::load_notes(&vault_path)?;
 
             let mut total_violations = 0;
+
+            // Schema validation (per-note)
             for parsed_note in &notes {
                 let violations = schema.validate(parsed_note);
                 for v in &violations {
                     println!("{}:{}: {}", v.note_path, v.field, v.message);
+                    total_violations += 1;
+                }
+            }
+
+            // Graph constraints (SPARQL)
+            if !schema.constraints.is_empty() {
+                let store = vault::load(&vault_path)?;
+                let graph_violations = store.validate_constraints(&schema.constraints)?;
+                for (_title, path, message) in &graph_violations {
+                    println!("{}:constraint: {}", path, message);
                     total_violations += 1;
                 }
             }

@@ -12,6 +12,16 @@ pub struct Schema {
     pub required: Vec<String>,
     #[serde(default)]
     pub fields: HashMap<String, FieldSchema>,
+    #[serde(default)]
+    pub constraints: Vec<Constraint>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Constraint {
+    pub name: String,
+    pub message: String,
+    /// SPARQL SELECT query that returns violating notes (must select ?note and ?title)
+    pub query: String,
 }
 
 #[derive(Debug, Deserialize)]

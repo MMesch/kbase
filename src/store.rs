@@ -450,4 +450,48 @@ impl Store {
     fn iri(&self, local: &str) -> NamedNode {
         NamedNode::new_unchecked(format!("{}{}", KBASE_NS, local))
     }
+
+    /// Validate graph constraints using SPARQL queries
+    /// Returns violations as (note_title, note_path, constraint_message)
+    pub fn validate_constraints(
+        &self,
+        constraints: &[crate::schema::Constraint],
+    ) -> Result<Vec<(String, String, String)>> {
+        let mut violations = Vec::new();
+
+        for constraint in constraints {
+            // The query should SELECT ?note ?title ?path for violating notes
+            // We wrap user query to ensure it returns what we need
+            let wrapped_query = format!(
+                r#"
+                PREFIX kb: <{KBASE_NS}>
+
+                SELECT ?title ?path WHERE {{
+                    ?note kb:type kb:Note .
+                    ?note kb:title ?title .
+                    ?note kb:path ?path .
+                    {}
+                }}
+                "#,
+                constraint.query
+            );
+
+            if let QueryResults::Solutions(solutions) = self.inner.query(&wrapped_query)? {
+                for solution in solutions {
+                    let solution = solution?;
+                    if let (Some(Term::Literal(title)), Some(Term::Literal(path))) =
+                        (solution.get("title"), solution.get("path"))
+                    {
+                        violations.push((
+                            title.value().to_string(),
+                            path.value().to_string(),
+                            constraint.message.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(violations)
+    }
 }
