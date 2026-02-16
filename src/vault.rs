@@ -40,8 +40,20 @@ pub fn find_vault_root() -> Result<PathBuf> {
 
 /// Load all notes into an in-memory store
 pub fn load(vault_path: &Path) -> Result<Store> {
-    let config = Config::load(vault_path)?;
+    let notes = load_notes(vault_path)?;
     let store = Store::new()?;
+
+    for parsed in notes {
+        store.upsert_note(&parsed)?;
+    }
+
+    Ok(store)
+}
+
+/// Load all notes as parsed Note structs
+pub fn load_notes(vault_path: &Path) -> Result<Vec<note::Note>> {
+    let config = Config::load(vault_path)?;
+    let mut notes = Vec::new();
 
     for entry in WalkDir::new(vault_path)
         .into_iter()
@@ -53,11 +65,11 @@ pub fn load(vault_path: &Path) -> Result<Store> {
         if path.extension().is_some_and(|ext| ext == "md")
             && let Ok(parsed) = note::parse(path, config.link_syntax)
         {
-            store.upsert_note(&parsed)?;
+            notes.push(parsed);
         }
     }
 
-    Ok(store)
+    Ok(notes)
 }
 
 fn is_hidden(entry: &walkdir::DirEntry) -> bool {

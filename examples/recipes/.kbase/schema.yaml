@@ -1,0 +1,11 @@
+required:
+  - title
+  - tags
+
+fields:
+  difficulty:
+    type: enum
+    values: [easy, medium, hard]
+  status:
+    type: enum
+    values: [draft, tested, favorite]

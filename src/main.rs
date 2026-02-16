@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use kbase::{note, vault};
+use kbase::{note, schema, vault};
 
 #[derive(Parser)]
 #[command(name = "kbase")]
@@ -47,6 +47,8 @@ enum Commands {
         #[arg(short, long)]
         notes: bool,
     },
+    /// Validate notes against schema
+    Validate,
 }
 
 fn main() -> Result<()> {
@@ -92,6 +94,27 @@ fn main() -> Result<()> {
             let tree = store.list_tags(tag.as_deref(), notes)?;
             for line in tree {
                 println!("{}", line);
+            }
+        }
+        Commands::Validate => {
+            let vault_path = get_vault()?;
+            let schema = schema::Schema::load(&vault_path)?;
+            let notes = vault::load_notes(&vault_path)?;
+
+            let mut total_violations = 0;
+            for parsed_note in &notes {
+                let violations = schema.validate(parsed_note);
+                for v in &violations {
+                    println!("{}:{}: {}", v.note_path, v.field, v.message);
+                    total_violations += 1;
+                }
+            }
+
+            if total_violations == 0 {
+                println!("All {} notes valid", notes.len());
+            } else {
+                println!("\n{} violation(s) in {} notes", total_violations, notes.len());
+                std::process::exit(1);
             }
         }
     }
