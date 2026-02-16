@@ -157,7 +157,7 @@ fn list_tags_returns_tree() {
     let vault_path = specs_path();
     let store = vault::load(&vault_path).expect("Failed to load specs vault");
 
-    let tree = store.list_tags().expect("Failed to list tags");
+    let tree = store.list_tags(None, false).expect("Failed to list tags");
 
     // Should have some tags
     assert!(!tree.is_empty(), "Should have tags");
@@ -173,6 +173,23 @@ fn list_tags_returns_tree() {
     assert!(
         tree.iter().any(|line| line.contains("feature")),
         "Should have 'feature' child tag, got: {:?}",
+        tree
+    );
+}
+
+#[test]
+fn list_tags_with_notes() {
+    let vault_path = specs_path();
+    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+
+    let tree = store
+        .list_tags(Some("spec/feature"), true)
+        .expect("Failed to list tags with notes");
+
+    // Should show notes under the tag
+    assert!(
+        tree.iter().any(|line| line.contains("[")),
+        "Should have notes in brackets, got: {:?}",
         tree
     );
 }

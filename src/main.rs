@@ -40,7 +40,13 @@ enum Commands {
         note: String,
     },
     /// Show tag hierarchy as a tree
-    Tags,
+    Tags {
+        /// Filter to specific tag subtree
+        tag: Option<String>,
+        /// Show notes under each tag
+        #[arg(short, long)]
+        notes: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -80,10 +86,10 @@ fn main() -> Result<()> {
                 println!("{}", link);
             }
         }
-        Commands::Tags => {
+        Commands::Tags { tag, notes } => {
             let vault_path = get_vault()?;
             let store = vault::load(&vault_path)?;
-            let tree = store.list_tags()?;
+            let tree = store.list_tags(tag.as_deref(), notes)?;
             for line in tree {
                 println!("{}", line);
             }

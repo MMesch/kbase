@@ -143,10 +143,10 @@ impl Store {
         Ok(results)
     }
 
-    /// List all tags as a tree structure
-    pub fn list_tags(&self) -> Result<Vec<String>> {
+    /// List all tags as a tree structure, optionally filtered and with notes
+    pub fn list_tags(&self, filter: Option<&str>, show_notes: bool) -> Result<Vec<String>> {
         // Query all tags and their parents
-        let query = format!(
+        let tags_query = format!(
             r#"
             PREFIX kb: <{KBASE_NS}>
 
@@ -158,14 +158,14 @@ impl Store {
         );
 
         // Collect tag -> parent relationships
-        let mut children: std::collections::HashMap<String, Vec<String>> =
+        let mut tag_children: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         let mut all_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut has_parent: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         let prefix = format!("{}tag/", KBASE_NS);
 
-        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+        if let QueryResults::Solutions(solutions) = self.inner.query(&tags_query)? {
             for solution in solutions {
                 let solution = solution?;
                 if let Some(Term::NamedNode(tag_node)) = solution.get("tag") {
@@ -179,7 +179,7 @@ impl Store {
                         let parent = parent_node.as_str().strip_prefix(&prefix).unwrap_or("");
                         if !parent.is_empty() {
                             has_parent.insert(tag.to_string());
-                            children
+                            tag_children
                                 .entry(parent.to_string())
                                 .or_default()
                                 .push(tag.to_string());
@@ -189,26 +189,81 @@ impl Store {
             }
         }
 
-        // Find root tags (no parent)
-        let mut roots: Vec<String> = all_tags.difference(&has_parent).cloned().collect();
-        roots.sort();
+        // Query notes per tag if showing notes
+        let mut tag_notes: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+
+        if show_notes {
+            let notes_query = format!(
+                r#"
+                PREFIX kb: <{KBASE_NS}>
+
+                SELECT ?tag ?title WHERE {{
+                    ?note kb:type kb:Note .
+                    ?note kb:title ?title .
+                    ?note kb:hasTag ?tagNode .
+                    BIND(REPLACE(STR(?tagNode), "^{KBASE_NS}tag/", "") AS ?tag)
+                }}
+                ORDER BY ?tag ?title
+                "#
+            );
+
+            if let QueryResults::Solutions(solutions) = self.inner.query(&notes_query)? {
+                for solution in solutions {
+                    let solution = solution?;
+                    if let (Some(Term::Literal(tag)), Some(Term::Literal(title))) =
+                        (solution.get("tag"), solution.get("title"))
+                    {
+                        tag_notes
+                            .entry(tag.value().to_string())
+                            .or_default()
+                            .push(title.value().to_string());
+                    }
+                }
+            }
+        }
+
+        // Find roots based on filter
+        let roots: Vec<String> = if let Some(filter_tag) = filter {
+            if all_tags.contains(filter_tag) {
+                vec![filter_tag.to_string()]
+            } else {
+                vec![]
+            }
+        } else {
+            let mut r: Vec<String> = all_tags.difference(&has_parent).cloned().collect();
+            r.sort();
+            r
+        };
 
         // Build tree output
         let mut output = Vec::new();
         for root in roots {
-            self.format_tag_tree(&root, "", true, true, &children, &mut output);
+            self.format_tag_tree_with_notes(
+                &root,
+                "",
+                true,
+                true,
+                &tag_children,
+                &tag_notes,
+                show_notes,
+                &mut output,
+            );
         }
 
         Ok(output)
     }
 
-    fn format_tag_tree(
+    #[allow(clippy::too_many_arguments)]
+    fn format_tag_tree_with_notes(
         &self,
         tag: &str,
         prefix: &str,
         is_last: bool,
         is_root: bool,
-        children: &std::collections::HashMap<String, Vec<String>>,
+        tag_children: &std::collections::HashMap<String, Vec<String>>,
+        tag_notes: &std::collections::HashMap<String, Vec<String>>,
+        show_notes: bool,
         output: &mut Vec<String>,
     ) {
         let connector = if is_root {
@@ -223,22 +278,55 @@ impl Store {
         let display_name = tag.rsplit('/').next().unwrap_or(tag);
         output.push(format!("{}{}{}", prefix, connector, display_name));
 
-        if let Some(child_tags) = children.get(tag) {
-            let mut sorted_children = child_tags.clone();
-            sorted_children.sort();
+        let child_tags = tag_children.get(tag);
+        let notes = if show_notes { tag_notes.get(tag) } else { None };
 
-            let new_prefix = if is_root {
-                String::new()
-            } else if is_last {
-                format!("{}    ", prefix)
-            } else {
-                format!("{}│   ", prefix)
-            };
+        let has_children = child_tags.is_some_and(|c| !c.is_empty());
+        let has_notes = notes.is_some_and(|n| !n.is_empty());
 
-            for (i, child) in sorted_children.iter().enumerate() {
-                let child_is_last = i == sorted_children.len() - 1;
-                self.format_tag_tree(child, &new_prefix, child_is_last, false, children, output);
-            }
+        if !has_children && !has_notes {
+            return;
+        }
+
+        let new_prefix = if is_root {
+            String::new()
+        } else if is_last {
+            format!("{}    ", prefix)
+        } else {
+            format!("{}│   ", prefix)
+        };
+
+        // Collect all items (child tags and notes) to determine last item
+        let mut sorted_child_tags: Vec<String> = child_tags.cloned().unwrap_or_default();
+        sorted_child_tags.sort();
+
+        let sorted_notes: Vec<String> = notes.cloned().unwrap_or_default();
+
+        let total_items = sorted_child_tags.len() + sorted_notes.len();
+        let mut item_index = 0;
+
+        // Print child tags first
+        for child in &sorted_child_tags {
+            item_index += 1;
+            let child_is_last = item_index == total_items;
+            self.format_tag_tree_with_notes(
+                child,
+                &new_prefix,
+                child_is_last,
+                false,
+                tag_children,
+                tag_notes,
+                show_notes,
+                output,
+            );
+        }
+
+        // Print notes
+        for note_title in &sorted_notes {
+            item_index += 1;
+            let note_is_last = item_index == total_items;
+            let note_connector = if note_is_last { "└── " } else { "├── " };
+            output.push(format!("{}{}[{}]", new_prefix, note_connector, note_title));
         }
     }
 
