@@ -56,39 +56,53 @@ cargo fmt --check        # Check formatting without changes
 └── src/                   # Implementation
 ```
 
-## Current Phase
-
-**Specification**: Defining requirements and making architectural decisions.
-
-### Key Decisions Pending
-
-- [ ] Language choice (Rust vs Go) - `ADR-001`
-- [ ] Embedded graph database - `ADR-002`
-
-## Quick Reference
-
-See `specs/PRODUCT.md` for full specification.
-
-### Planned Commands
+## Commands
 
 ```bash
 # Vault management
-kbase init                    # Initialize vault
-kbase vault list              # List vaults
-
-# Note operations
+kbase init [path]             # Initialize vault
 kbase new "Note title"        # Create note
-kbase edit note-name          # Edit in $EDITOR
-kbase list                    # List notes
-kbase search "query"          # Full-text search
 
-# Graph operations
-kbase links note-name         # Show outgoing links
+# List and query
+kbase list                    # List all notes
+kbase list --tag recipe       # Filter by tag
+kbase tags                    # Show tag tree
+kbase tags --notes            # Show tag tree with notes
 kbase backlinks note-name     # Show incoming links
-kbase query "..."             # Graph query
+
+# Validation
+kbase validate                # Validate against schema
+
+# Semantic search (requires ONNX model)
+kbase search "query"          # Semantic search across notes
 kbase similar note-name       # Find similar notes
-kbase embed note-name         # Generate embeddings
 ```
+
+## Semantic Search Setup
+
+kbase uses local ONNX models for embeddings - no external API needed.
+
+### Download the model
+
+```bash
+mkdir -p models
+curl -L -o models/model.onnx \
+  https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx
+curl -L -o models/tokenizer.json \
+  https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json
+```
+
+### Configure chunking (optional)
+
+In `.kbase/config.yaml`:
+
+```yaml
+embeddings:
+  backend: onnx      # or "ollama" for Ollama server
+  chunk_level: "##"  # Split on H2 headers (options: none, #, ##, ###, paragraph)
+```
+
+Embeddings are cached in `.kbase/embeddings.redb` - only changed content is re-embedded.
 
 ## License
 

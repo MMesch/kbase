@@ -1,1 +1,5 @@
 link_syntax: wiki
+
+embeddings:
+  backend: onnx
+  chunk_level: "##"

@@ -32,6 +32,9 @@
           openssl
           pkg-config
 
+          # Embeddings
+          ollama
+
           # TypeScript/Deno ecosystem
           deno
           nodejs

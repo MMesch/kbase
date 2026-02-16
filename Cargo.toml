@@ -21,3 +21,16 @@ regex = "1"
 anyhow = "1"
 thiserror = "1"
 
+# Embeddings
+ort = { version = "2.0.0-rc.11", features = ["ndarray"] }
+ndarray = "0.17"
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+
+# HTTP client (for Ollama fallback)
+ureq = { version = "2", features = ["json"] }
+serde_json = "1"
+
+# Embedding cache
+redb = "2"
+sha2 = "0.10"
+
