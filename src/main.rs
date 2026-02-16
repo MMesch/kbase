@@ -1,0 +1,76 @@
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+mod config;
+mod note;
+mod store;
+mod vault;
+
+#[derive(Parser)]
+#[command(name = "kbase")]
+#[command(about = "Knowledge graph CLI for markdown notes")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Initialize a new vault
+    Init {
+        /// Path to initialize (defaults to current directory)
+        path: Option<PathBuf>,
+    },
+    /// Create a new note
+    New {
+        /// Note title
+        title: String,
+    },
+    /// List notes
+    List {
+        /// Filter by tag (includes descendants)
+        #[arg(long)]
+        tag: Option<String>,
+    },
+    /// Show backlinks to a note
+    Backlinks {
+        /// Note identifier (title)
+        note: String,
+    },
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Init { path } => {
+            let path = path.unwrap_or_else(|| PathBuf::from("."));
+            vault::init(&path)?;
+            println!("Initialized kbase vault in {}", path.display());
+        }
+        Commands::New { title } => {
+            let vault_path = vault::find_vault_root()?;
+            let note_path = note::create(&vault_path, &title)?;
+            println!("Created {}", note_path.display());
+        }
+        Commands::List { tag } => {
+            let vault_path = vault::find_vault_root()?;
+            let store = vault::load(&vault_path)?;
+            let notes = store.list_notes(tag.as_deref())?;
+            for note in notes {
+                println!("{}", note);
+            }
+        }
+        Commands::Backlinks { note } => {
+            let vault_path = vault::find_vault_root()?;
+            let store = vault::load(&vault_path)?;
+            let backlinks = store.backlinks(&note)?;
+            for link in backlinks {
+                println!("{}", link);
+            }
+        }
+    }
+
+    Ok(())
+}

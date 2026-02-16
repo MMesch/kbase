@@ -1,0 +1,22 @@
+[package]
+name = "kbase"
+version = "0.1.0"
+edition = "2024"
+description = "Knowledge graph CLI for markdown notes"
+
+[dependencies]
+# RDF triple store
+oxigraph = "0.4"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+
+# Utilities
+walkdir = "2"
+regex = "1"
+anyhow = "1"
+thiserror = "1"

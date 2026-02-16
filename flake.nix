@@ -18,16 +18,22 @@
           jq
           ripgrep
           fd
-          
+
           # Rust ecosystem
           rustc
           cargo
           rust-analyzer
-          
+
+          # Build dependencies
+          clang
+          libclang.lib
+
           # TypeScript/Deno ecosystem
           deno
           nodejs
         ];
+
+        LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
 
         shellHook = ''
           echo "kg development environment ready"
