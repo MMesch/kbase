@@ -76,6 +76,10 @@ kbase validate                # Validate against schema
 # Semantic search (requires ONNX model)
 kbase search "query"          # Semantic search across notes
 kbase similar note-name       # Find similar notes
+
+# Editor integration
+kbase lsp                     # Start LSP server
+kbase install-skills          # Install AI assistant skills
 ```
 
 ## Semantic Search Setup
@@ -105,6 +109,50 @@ embeddings:
 ```
 
 Embeddings are cached in `.kbase/embeddings.redb` - only changed content is re-embedded.
+
+## LSP Server
+
+kbase includes an LSP server for editor integration with features like:
+
+- **Go to definition**: Follow `[[wiki links]]` to target notes
+- **Find references**: Show all backlinks to the current note
+- **Hover**: Preview note content when hovering over links
+- **Completion**: Suggest note titles when typing `[[`
+
+### Neovim + CoC Setup
+
+Add to your `coc-settings.json`:
+
+```json
+{
+  "languageserver": {
+    "kbase": {
+      "command": "kbase",
+      "args": ["lsp"],
+      "filetypes": ["markdown"],
+      "rootPatterns": [".kbase"]
+    }
+  }
+}
+```
+
+## AI Assistant Skills
+
+kbase can generate skills for AI coding assistants (like Claude Code):
+
+```bash
+kbase install-skills
+```
+
+This creates `.claude/skills/` with:
+
+- `/kb-search` - Semantic search with results as context
+- `/kb-similar` - Find related notes
+- `/kb-backlinks` - Show notes that reference a topic
+- `/kb-validate` - Run schema validation
+- `/kb-new` - Create new notes with suggestions
+
+Use these skills to query your knowledge base from any project directory.
 
 ## License
 
