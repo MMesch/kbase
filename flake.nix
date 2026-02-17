@@ -27,6 +27,7 @@
           rust-analyzer
 
           # Build dependencies
+          gcc
           clang
           libclang.lib
           openssl

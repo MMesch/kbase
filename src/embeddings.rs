@@ -117,20 +117,28 @@ impl OnnxBackend {
             return Ok(vault_models);
         }
 
-        // Global fallback: ~/.cache/kbase/models
-        if let Some(home) = std::env::var_os("HOME") {
-            let global_dir = Path::new(&home).join(".cache/kbase/models");
+        // Global fallback: $XDG_CACHE_HOME/kbase/models or ~/.cache/kbase/models
+        let cache_dir = std::env::var_os("XDG_CACHE_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cache")));
+
+        if let Some(cache) = cache_dir {
+            let global_dir = cache.join("kbase/models");
             if has_model(&global_dir) {
                 return Ok(global_dir);
             }
         }
 
-        // Neither found - show helpful error
+        // Neither found - show helpful error with XDG path
+        let cache_path = std::env::var("XDG_CACHE_HOME")
+            .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_default() + "/.cache");
+
         anyhow::bail!(
             "Model files not found. Download with:\n  \
-             mkdir -p models\n  \
-             curl -L -o models/model.onnx https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx\n  \
-             curl -L -o models/tokenizer.json https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
+             mkdir -p {0}/kbase/models\n  \
+             curl -L -o {0}/kbase/models/model.onnx https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx\n  \
+             curl -L -o {0}/kbase/models/tokenizer.json https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
+            cache_path
         );
     }
 

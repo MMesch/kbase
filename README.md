@@ -85,12 +85,14 @@ kbase uses local ONNX models for embeddings - no external API needed.
 ### Download the model
 
 ```bash
-mkdir -p models
-curl -L -o models/model.onnx \
+mkdir -p ~/.cache/kbase/models
+curl -L -o ~/.cache/kbase/models/model.onnx \
   https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx
-curl -L -o models/tokenizer.json \
+curl -L -o ~/.cache/kbase/models/tokenizer.json \
   https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json
 ```
+
+Models are searched in: `./models`, `<vault>/models`, `$XDG_CACHE_HOME/kbase/models`.
 
 ### Configure chunking (optional)
 
