@@ -22,7 +22,7 @@ anyhow = "1"
 thiserror = "1"
 
 # Embeddings
-ort = { version = "2.0.0-rc.11", features = ["ndarray"] }
+ort = { version = "2.0.0-rc.11", default-features = false, features = ["ndarray", "load-dynamic"] }
 ndarray = "0.17"
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 
