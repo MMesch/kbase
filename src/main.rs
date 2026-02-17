@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use kbase::{config, config::Config, embeddings, note, schema, vault};
+use kbase::{config, config::Config, embeddings, lsp, note, schema, vault};
 
 #[derive(Parser)]
 #[command(name = "kbase")]
@@ -65,6 +65,8 @@ enum Commands {
         #[arg(short, long, default_value = "5")]
         limit: usize,
     },
+    /// Start LSP server (for editor integration)
+    Lsp,
 }
 
 fn main() -> Result<()> {
@@ -291,6 +293,13 @@ fn main() -> Result<()> {
                 println!("       {}", preview.replace('\n', " "));
                 println!();
             }
+        }
+        Commands::Lsp => {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(lsp::run_server());
         }
     }
 

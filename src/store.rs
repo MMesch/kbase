@@ -81,7 +81,7 @@ impl Store {
             self.inner.insert(&Quad::new(
                 note_iri.clone(),
                 self.iri("linksTo"),
-                Literal::new_simple_literal(link),
+                Literal::new_simple_literal(&link.target),
                 GraphNameRef::DefaultGraph,
             ))?;
         }
