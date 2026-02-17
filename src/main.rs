@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use kbase::{config, config::Config, embeddings, lsp, note, schema, vault};
+use kbase::{config, config::Config, embeddings, lsp, note, schema, skills, vault};
 
 #[derive(Parser)]
 #[command(name = "kbase")]
@@ -67,6 +67,8 @@ enum Commands {
     },
     /// Start LSP server (for editor integration)
     Lsp,
+    /// Install Claude Code skills for this vault
+    InstallSkills,
 }
 
 fn main() -> Result<()> {
@@ -300,6 +302,14 @@ fn main() -> Result<()> {
                 .build()
                 .unwrap()
                 .block_on(lsp::run_server());
+        }
+        Commands::InstallSkills => {
+            let vault_path = get_vault()?;
+            let installed = skills::install(&vault_path)?;
+            for skill in &installed {
+                println!("Installed /{}", skill);
+            }
+            println!("\nSkills installed to {}/.claude/skills/", vault_path.display());
         }
     }
 
