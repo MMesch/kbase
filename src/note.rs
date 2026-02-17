@@ -267,9 +267,10 @@ mod tests {
     #[test]
     fn split_frontmatter_basic() {
         let content = "---\ntitle: Test\n---\nBody here";
-        let (fm, body) = split_frontmatter(content).unwrap();
+        let (fm, body, line) = split_frontmatter(content).unwrap();
         assert_eq!(fm, "title: Test");
         assert_eq!(body, "\nBody here");
+        assert_eq!(line, 2);  // 0: ---, 1: title, 2: ---, body starts after
     }
 
     #[test]

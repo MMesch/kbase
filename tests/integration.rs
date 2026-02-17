@@ -115,7 +115,7 @@ fn extract_links_from_spec() {
 
     // metadata-graph.md has a markdown link to ../research/validation.md
     assert!(
-        parsed.links.iter().any(|l| l.contains("validation")),
+        parsed.links.iter().any(|l| l.target.contains("validation")),
         "Should have extracted link to validation.md, got: {:?}",
         parsed.links
     );
