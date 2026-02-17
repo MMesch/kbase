@@ -4,47 +4,62 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, crane }:
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs { inherit system; };
-    in {
-      packages.default = pkgs.rustPlatform.buildRustPackage {
-        pname = "kbase";
-        version = "0.1.0";
-        src = ./.;
+      craneLib = crane.mkLib pkgs;
 
-        cargoLock = {
-          lockFile = ./Cargo.lock;
-        };
+      # Common build inputs
+      nativeBuildInputs = with pkgs; [
+        pkg-config
+        clang
+        makeWrapper
+      ];
 
-        nativeBuildInputs = with pkgs; [
-          pkg-config
-          clang
-          makeWrapper
-        ];
+      buildInputs = with pkgs; [
+        openssl
+        libclang.lib
+        # RocksDB dependencies
+        snappy
+        zlib
+        lz4
+        zstd
+        bzip2
+        # ONNX Runtime (loaded dynamically at runtime)
+        onnxruntime
+      ];
 
-        buildInputs = with pkgs; [
-          openssl
-          libclang.lib
-          # RocksDB dependencies
-          snappy
-          zlib
-          lz4
-          zstd
-          bzip2
-          # ONNX Runtime (loaded dynamically at runtime)
-          onnxruntime
-        ];
-
+      # Common environment
+      commonEnv = {
         LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
-
-        # Use clang for C++ to avoid gcc 15 ICE
         CXX = "${pkgs.clang}/bin/clang++";
         CC = "${pkgs.clang}/bin/clang";
+      };
 
-        # Wrap binary to load ONNX Runtime at runtime
+      # Filter source - include Rust files plus test fixtures
+      src = pkgs.lib.cleanSourceWith {
+        src = ./.;
+        filter = path: type:
+          (craneLib.filterCargoSources path type) ||
+          (builtins.match ".*/(specs|examples)/.*" path != null);
+      };
+
+      # Common arguments for all builds
+      commonArgs = {
+        inherit src nativeBuildInputs buildInputs;
+        strictDeps = true;
+      } // commonEnv;
+
+      # Build dependencies only (cached separately)
+      cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+      # Build the actual package
+      kbase = craneLib.buildPackage (commonArgs // {
+        inherit cargoArtifacts;
+
         postInstall = ''
           wrapProgram $out/bin/kbase \
             --set ORT_DYLIB_PATH ${pkgs.onnxruntime}/lib/libonnxruntime.so
@@ -56,6 +71,21 @@
           license = licenses.mit;
           mainProgram = "kbase";
         };
+      });
+
+    in {
+      packages.default = kbase;
+
+      # Additional checks (clippy, tests, etc.)
+      checks = {
+        inherit kbase;
+
+        kbase-clippy = craneLib.cargoClippy (commonArgs // {
+          inherit cargoArtifacts;
+          cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+        });
+
+        kbase-fmt = craneLib.cargoFmt { inherit src; };
       };
 
       devShells.default = pkgs.mkShell {
