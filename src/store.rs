@@ -90,25 +90,42 @@ impl Store {
     }
 
     /// List notes, optionally filtered by tag (includes descendants)
-    pub fn list_notes(&self, tag: Option<&str>) -> Result<Vec<String>> {
+    pub fn list_notes(&self, tag: Option<&str>, direct_only: bool) -> Result<Vec<String>> {
         let query = match tag {
             Some(tag) => {
                 let tag_iri = format!("{KBASE_NS}tag/{tag}");
-                // Query notes with this tag or any descendant tag
-                format!(
-                    r#"
-                    PREFIX kb: <{KBASE_NS}>
+                if direct_only {
+                    // Query notes directly tagged with this specific tag only
+                    format!(
+                        r#"
+                        PREFIX kb: <{KBASE_NS}>
 
-                    SELECT DISTINCT ?title ?path WHERE {{
-                        ?note kb:type kb:Note .
-                        ?note kb:title ?title .
-                        ?note kb:path ?path .
-                        ?note kb:hasTag ?tag .
-                        ?tag kb:parentTag* <{tag_iri}> .
-                    }}
-                    ORDER BY ?title
-                    "#
-                )
+                        SELECT DISTINCT ?title ?path WHERE {{
+                            ?note kb:type kb:Note .
+                            ?note kb:title ?title .
+                            ?note kb:path ?path .
+                            ?note kb:hasTag <{tag_iri}> .
+                        }}
+                        ORDER BY ?title
+                        "#
+                    )
+                } else {
+                    // Query notes with this tag or any descendant tag
+                    format!(
+                        r#"
+                        PREFIX kb: <{KBASE_NS}>
+
+                        SELECT DISTINCT ?title ?path WHERE {{
+                            ?note kb:type kb:Note .
+                            ?note kb:title ?title .
+                            ?note kb:path ?path .
+                            ?note kb:hasTag ?tag .
+                            ?tag kb:parentTag* <{tag_iri}> .
+                        }}
+                        ORDER BY ?title
+                        "#
+                    )
+                }
             }
             None => {
                 // Query all notes
@@ -328,6 +345,38 @@ impl Store {
             let note_connector = if note_is_last { "└── " } else { "├── " };
             output.push(format!("{}{}[{}]", new_prefix, note_connector, note_title));
         }
+    }
+
+    /// Get all tag paths as a flat list
+    pub fn all_tags(&self) -> Result<Vec<String>> {
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+
+            SELECT ?tag WHERE {{
+                ?tag kb:type kb:Tag .
+            }}
+            "#
+        );
+
+        let prefix = format!("{}tag/", KBASE_NS);
+        let mut tags = Vec::new();
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions {
+                let solution = solution?;
+                if let Some(Term::NamedNode(tag_node)) = solution.get("tag") {
+                    if let Some(tag) = tag_node.as_str().strip_prefix(&prefix) {
+                        if !tag.is_empty() {
+                            tags.push(tag.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        tags.sort();
+        Ok(tags)
     }
 
     /// Find notes that link to the given note

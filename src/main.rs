@@ -64,6 +64,9 @@ enum Commands {
         /// Number of results
         #[arg(short, long, default_value = "5")]
         limit: usize,
+        /// Output format (text, json)
+        #[arg(long, default_value = "text")]
+        format: String,
     },
     /// Start LSP server (for editor integration)
     Lsp,
@@ -95,7 +98,7 @@ fn main() -> Result<()> {
         Commands::List { tag } => {
             let vault_path = get_vault()?;
             let store = vault::load(&vault_path)?;
-            let notes = store.list_notes(tag.as_deref())?;
+            let notes = store.list_notes(tag.as_deref(), false)?;
             for note in notes {
                 println!("{}", note);
             }
@@ -186,15 +189,16 @@ fn main() -> Result<()> {
                 let content = std::fs::read_to_string(&n.path)?;
                 let chunks = embeddings::split_into_chunks(&content, chunk_level);
 
-                let texts: Vec<&str> = chunks.iter().map(|(_, text)| text.as_str()).collect();
+                let texts: Vec<&str> = chunks.iter().map(|(_, text, _)| text.as_str()).collect();
                 let vectors = cache.get_or_compute_batch(&texts, &mut *backend)?;
 
-                for ((headers, text), embedding) in chunks.into_iter().zip(vectors) {
+                for ((headers, text, line), embedding) in chunks.into_iter().zip(vectors) {
                     store.add_chunk(embeddings::Chunk {
                         note_path: n.path.to_string_lossy().to_string(),
                         header_path: headers,
                         text,
                         embedding,
+                        line,
                     });
                 }
             }
@@ -234,7 +238,7 @@ fn main() -> Result<()> {
                 println!("{:.3}  {}{}", score, chunk.note_path, header);
             }
         }
-        Commands::Search { query, limit } => {
+        Commands::Search { query, limit, format } => {
             let vault_path = get_vault()?;
             let config = Config::load(&vault_path)?;
             let notes = vault::load_notes(&vault_path)?;
@@ -261,15 +265,16 @@ fn main() -> Result<()> {
                 let content = std::fs::read_to_string(&n.path)?;
                 let chunks = embeddings::split_into_chunks(&content, chunk_level);
 
-                let texts: Vec<&str> = chunks.iter().map(|(_, text)| text.as_str()).collect();
+                let texts: Vec<&str> = chunks.iter().map(|(_, text, _)| text.as_str()).collect();
                 let vectors = cache.get_or_compute_batch(&texts, &mut *backend)?;
 
-                for ((headers, text), embedding) in chunks.into_iter().zip(vectors) {
+                for ((headers, text, line), embedding) in chunks.into_iter().zip(vectors) {
                     store.add_chunk(embeddings::Chunk {
                         note_path: n.path.to_string_lossy().to_string(),
                         header_path: headers,
                         text,
                         embedding,
+                        line,
                     });
                 }
             }
@@ -280,20 +285,50 @@ fn main() -> Result<()> {
             // Find similar chunks
             let results = store.find_similar(&query_embedding, limit);
 
-            println!("Results for: {}", query);
-            println!();
+            match format.as_str() {
+                "json" => {
+                    let json_results: Vec<serde_json::Value> = results
+                        .iter()
+                        .map(|(chunk, score)| {
+                            serde_json::json!({
+                                "path": chunk.note_path,
+                                "score": score,
+                                "section": chunk.header_path.join(" > "),
+                                "preview": chunk.text.chars().take(200).collect::<String>()
+                            })
+                        })
+                        .collect();
+                    println!("{}", serde_json::to_string(&json_results)?);
+                }
+                "quickfix" => {
+                    // Format: file:line:col:text (vim quickfix format)
+                    for (chunk, score) in &results {
+                        let section = if chunk.header_path.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" > {}", chunk.header_path.join(" > "))
+                        };
+                        let preview: String = chunk.text.chars().take(80).collect::<String>().replace('\n', " ");
+                        println!("{}:1:1:[{:.2}]{} {}", chunk.note_path, score, section, preview);
+                    }
+                }
+                _ => {
+                    println!("Results for: {}", query);
+                    println!();
 
-            for (chunk, score) in results {
-                let header = if chunk.header_path.is_empty() {
-                    String::new()
-                } else {
-                    format!(" > {}", chunk.header_path.join(" > "))
-                };
-                println!("{:.3}  {}{}", score, chunk.note_path, header);
-                // Show preview of text
-                let preview: String = chunk.text.chars().take(100).collect();
-                println!("       {}", preview.replace('\n', " "));
-                println!();
+                    for (chunk, score) in results {
+                        let header = if chunk.header_path.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" > {}", chunk.header_path.join(" > "))
+                        };
+                        println!("{:.3}  {}{}", score, chunk.note_path, header);
+                        // Show preview of text
+                        let preview: String = chunk.text.chars().take(100).collect();
+                        println!("       {}", preview.replace('\n', " "));
+                        println!();
+                    }
+                }
             }
         }
         Commands::Lsp => {
@@ -309,7 +344,8 @@ fn main() -> Result<()> {
             for skill in &installed {
                 println!("Installed /{}", skill);
             }
-            println!("\nSkills installed to {}/.claude/skills/", vault_path.display());
+            let cwd = std::env::current_dir()?;
+            println!("\nSkills installed to {}/.claude/skills/", cwd.display());
         }
     }
 

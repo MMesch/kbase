@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
 
-/// Install Claude Code skills for this vault
-pub fn install(vault_path: &Path) -> Result<Vec<String>> {
-    let skills_dir = vault_path.join(".claude").join("skills");
+/// Install Claude Code skills to the current working directory
+pub fn install(_vault_path: &Path) -> Result<Vec<String>> {
+    let skills_dir = std::env::current_dir()?.join(".claude").join("skills");
     let mut installed = Vec::new();
 
     // Create each skill

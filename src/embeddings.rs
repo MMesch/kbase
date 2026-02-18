@@ -19,6 +19,7 @@ pub struct Chunk {
     pub header_path: Vec<String>, // e.g., ["Recipe", "Ingredients"]
     pub text: String,
     pub embedding: Vec<f32>,
+    pub line: u32, // 0-indexed line number where chunk starts
 }
 
 /// Trait for embedding backends (Ollama, Mistral, OpenAI, etc.)
@@ -467,9 +468,10 @@ impl ChunkLevel {
 }
 
 /// Split markdown content into chunks based on level
-pub fn split_into_chunks(content: &str, level: ChunkLevel) -> Vec<(Vec<String>, String)> {
+/// Returns (header_path, text, line_number) for each chunk
+pub fn split_into_chunks(content: &str, level: ChunkLevel) -> Vec<(Vec<String>, String, u32)> {
     match level {
-        ChunkLevel::None => vec![(vec![], content.to_string())],
+        ChunkLevel::None => vec![(vec![], content.to_string(), 0)],
         ChunkLevel::H1 => split_by_header(content, 1),
         ChunkLevel::H2 => split_by_header(content, 2),
         ChunkLevel::H3 => split_by_header(content, 3),
@@ -477,13 +479,15 @@ pub fn split_into_chunks(content: &str, level: ChunkLevel) -> Vec<(Vec<String>, 
     }
 }
 
-fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String)> {
+fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String, u32)> {
     let prefix = "#".repeat(level);
     let _pattern = format!("\n{} ", prefix);
 
     let mut chunks = Vec::new();
     let mut current_headers: Vec<String> = Vec::new();
     let mut current_text = String::new();
+    let mut current_start_line: u32 = 0;
+    let mut line_number: u32 = 0;
 
     for line in content.lines() {
         let trimmed = line.trim_start();
@@ -495,7 +499,7 @@ fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String)> {
             if header_level <= level {
                 // Save previous chunk if non-empty
                 if !current_text.trim().is_empty() {
-                    chunks.push((current_headers.clone(), current_text.trim().to_string()));
+                    chunks.push((current_headers.clone(), current_text.trim().to_string(), current_start_line));
                 }
 
                 // Update header path
@@ -506,34 +510,44 @@ fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String)> {
                 current_headers.push(header_text);
 
                 current_text = String::new();
+                current_start_line = line_number;
+                line_number += 1;
                 continue;
             }
         }
 
         current_text.push_str(line);
         current_text.push('\n');
+        line_number += 1;
     }
 
     // Don't forget the last chunk
     if !current_text.trim().is_empty() {
-        chunks.push((current_headers, current_text.trim().to_string()));
+        chunks.push((current_headers, current_text.trim().to_string(), current_start_line));
     }
 
     // If no chunks were created, return the whole content
     if chunks.is_empty() {
-        chunks.push((vec![], content.to_string()));
+        chunks.push((vec![], content.to_string(), 0));
     }
 
     chunks
 }
 
-fn split_by_paragraph(content: &str) -> Vec<(Vec<String>, String)> {
-    content
-        .split("\n\n")
-        .map(|p| p.trim())
-        .filter(|p| !p.is_empty())
-        .map(|p| (vec![], p.to_string()))
-        .collect()
+fn split_by_paragraph(content: &str) -> Vec<(Vec<String>, String, u32)> {
+    let mut chunks = Vec::new();
+    let mut current_line: u32 = 0;
+
+    for part in content.split("\n\n") {
+        let trimmed = part.trim();
+        if !trimmed.is_empty() {
+            chunks.push((vec![], trimmed.to_string(), current_line));
+        }
+        // Count lines in this part plus the blank line separator
+        current_line += part.matches('\n').count() as u32 + 2;
+    }
+
+    chunks
 }
 
 #[cfg(test)]
@@ -559,6 +573,10 @@ mod tests {
         let content = "# Title\n\nIntro\n\n## Section 1\n\nContent 1\n\n## Section 2\n\nContent 2";
         let chunks = split_by_header(content, 2);
         assert_eq!(chunks.len(), 3);
+        // Check line numbers
+        assert_eq!(chunks[0].2, 0); // # Title at line 0
+        assert_eq!(chunks[1].2, 4); // ## Section 1 at line 4
+        assert_eq!(chunks[2].2, 8); // ## Section 2 at line 8
     }
 
     #[test]
@@ -566,5 +584,6 @@ mod tests {
         let content = "Para 1\n\nPara 2\n\nPara 3";
         let chunks = split_by_paragraph(content);
         assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].2, 0); // Para 1 at line 0
     }
 }

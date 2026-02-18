@@ -16,7 +16,7 @@ fn load_specs_vault() {
     let store = vault::load(&vault_path).expect("Failed to load specs vault");
 
     // Should have loaded multiple notes
-    let notes = store.list_notes(None).expect("Failed to list notes");
+    let notes = store.list_notes(None, false).expect("Failed to list notes");
     assert!(!notes.is_empty(), "Should have loaded some notes");
 
     // Verify we have the expected spec files
@@ -40,7 +40,7 @@ fn filter_by_tag() {
 
     // Filter by spec/feature tag - should include descendants
     let feature_notes = store
-        .list_notes(Some("spec/feature"))
+        .list_notes(Some("spec/feature"), false)
         .expect("Failed to filter by tag");
 
     // Should have at least the feature specs (metadata-graph, vault-init, etc.)
@@ -67,11 +67,11 @@ fn filter_by_parent_tag() {
 
     // Filter by parent tag "spec" - should include all specs (spec/feature, spec/contract, etc.)
     let all_specs = store
-        .list_notes(Some("spec"))
+        .list_notes(Some("spec"), false)
         .expect("Failed to filter by parent tag");
 
     let feature_specs = store
-        .list_notes(Some("spec/feature"))
+        .list_notes(Some("spec/feature"), false)
         .expect("Failed to filter by child tag");
 
     // Parent tag should include at least as many notes as child tag
@@ -146,7 +146,7 @@ fn store_handles_empty_tag_filter() {
 
     // Non-existent tag should return empty
     let notes = store
-        .list_notes(Some("nonexistent/tag"))
+        .list_notes(Some("nonexistent/tag"), false)
         .expect("Failed to filter by nonexistent tag");
 
     assert!(notes.is_empty(), "Should have no notes for nonexistent tag");

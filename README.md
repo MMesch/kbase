@@ -136,6 +136,51 @@ Add to your `coc-settings.json`:
 }
 ```
 
+## Neovim Integrations
+
+kbase includes additional Neovim plugins for enhanced editing experience.
+
+### Telescope Pickers
+
+Fuzzy search and semantic search via Telescope:
+
+```lua
+-- Add to your runtimepath
+vim.opt.runtimepath:append("/path/to/kbase/extras/lua")
+
+-- Setup telescope extension
+require("telescope-kbase").setup()
+```
+
+**Keymaps (customize as needed):**
+
+```lua
+vim.keymap.set("n", "<leader>ks", require("telescope-kbase").search, { desc = "kbase: semantic search" })
+vim.keymap.set("n", "<leader>kn", require("telescope-kbase").notes, { desc = "kbase: browse notes" })
+vim.keymap.set("n", "<leader>kt", require("telescope-kbase").tags, { desc = "kbase: browse tags" })
+vim.keymap.set("n", "<leader>kb", require("telescope-kbase").backlinks, { desc = "kbase: backlinks" })
+```
+
+### Neo-tree Tag Browser
+
+Hierarchical tag tree similar to Obsidian's tag pane:
+
+```lua
+-- Add to your runtimepath
+vim.opt.runtimepath:append("/path/to/kbase/extras/lua")
+vim.opt.runtimepath:append("/path/to/kbase/extras/lua/neo-tree/sources")
+
+-- Setup after neo-tree
+require("kbase-neotree").setup({
+  keymap = "<leader>kt",  -- Optional: set a keymap
+})
+```
+
+Open with `:KbaseTags` or your configured keymap. Features:
+- Hierarchical tag tree with lazy-loaded children
+- Notes shown under their direct tags (no duplicates)
+- Press Enter to expand tags or open notes
+
 ## AI Assistant Skills
 
 kbase can generate skills for AI coding assistants (like Claude Code):

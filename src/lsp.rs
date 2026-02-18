@@ -6,7 +6,8 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use crate::config::Config;
+use crate::config::{self, Config};
+use crate::embeddings::{self, EmbeddingBackend, EmbeddingCache, EmbeddingStore};
 use crate::note::{self, Link, Note};
 use crate::vault;
 
@@ -17,6 +18,12 @@ pub struct KbaseLanguageServer {
     notes: RwLock<HashMap<PathBuf, Note>>,
     /// Vault root path
     vault_path: RwLock<Option<PathBuf>>,
+    /// Embedding store for semantic search
+    embedding_store: RwLock<Option<EmbeddingStore>>,
+    /// Embedding cache (persisted)
+    embedding_cache: RwLock<Option<EmbeddingCache>>,
+    /// Embedding backend
+    embedding_backend: RwLock<Option<Box<dyn EmbeddingBackend + Send + Sync>>>,
 }
 
 impl KbaseLanguageServer {
@@ -25,7 +32,83 @@ impl KbaseLanguageServer {
             client,
             notes: RwLock::new(HashMap::new()),
             vault_path: RwLock::new(None),
+            embedding_store: RwLock::new(None),
+            embedding_cache: RwLock::new(None),
+            embedding_backend: RwLock::new(None),
         }
+    }
+
+    /// Initialize embeddings (called lazily on first search)
+    fn init_embeddings(&self) -> anyhow::Result<()> {
+        let vault_path = self.vault_path.read().unwrap().clone();
+        let vault_path = vault_path.ok_or_else(|| anyhow::anyhow!("No vault path"))?;
+
+        // Already initialized?
+        if self.embedding_backend.read().unwrap().is_some() {
+            return Ok(());
+        }
+
+        let config = Config::load(&vault_path)?;
+        let cache_path = vault_path.join(".kbase").join("embeddings.redb");
+        let cache = EmbeddingCache::open(&cache_path)?;
+
+        let backend: Box<dyn EmbeddingBackend + Send + Sync> = match config.embeddings.backend {
+            config::EmbeddingBackend::Onnx => {
+                let model_dir = embeddings::OnnxBackend::find_model_dir(&vault_path)?;
+                Box::new(embeddings::OnnxBackend::new(&model_dir)?)
+            }
+            config::EmbeddingBackend::Ollama => {
+                Box::new(embeddings::OllamaBackend::new(None)?)
+            }
+        };
+
+        *self.embedding_cache.write().unwrap() = Some(cache);
+        *self.embedding_backend.write().unwrap() = Some(backend);
+
+        Ok(())
+    }
+
+    /// Build/refresh embedding store from notes
+    fn refresh_embeddings(&self) -> anyhow::Result<()> {
+        self.init_embeddings()?;
+
+        let vault_path = self.vault_path.read().unwrap().clone();
+        let vault_path = vault_path.ok_or_else(|| anyhow::anyhow!("No vault path"))?;
+        let config = Config::load(&vault_path)?;
+        let chunk_level = embeddings::ChunkLevel::from_str(&config.embeddings.chunk_level);
+
+        let notes = self.notes.read().unwrap();
+        let mut store = EmbeddingStore::new();
+
+        let mut cache = self.embedding_cache.write().unwrap();
+        let mut backend = self.embedding_backend.write().unwrap();
+
+        let cache = cache.as_mut().ok_or_else(|| anyhow::anyhow!("No cache"))?;
+        let backend = backend.as_mut().ok_or_else(|| anyhow::anyhow!("No backend"))?;
+
+        for note in notes.values() {
+            let content = match std::fs::read_to_string(&note.path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let chunks = embeddings::split_into_chunks(&content, chunk_level);
+
+            let texts: Vec<&str> = chunks.iter().map(|(_, text, _)| text.as_str()).collect();
+            let vectors = cache.get_or_compute_batch(&texts, backend.as_mut())?;
+
+            for ((headers, text, line), embedding) in chunks.into_iter().zip(vectors) {
+                store.add_chunk(embeddings::Chunk {
+                    note_path: note.path.to_string_lossy().to_string(),
+                    header_path: headers,
+                    text,
+                    embedding,
+                    line,
+                });
+            }
+        }
+
+        *self.embedding_store.write().unwrap() = Some(store);
+        Ok(())
     }
 
     /// Refresh the notes cache
@@ -148,6 +231,18 @@ impl LanguageServer for KbaseLanguageServer {
                 // Completion - suggest note titles
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec!["[".to_string()]),
+                    ..Default::default()
+                }),
+                // Workspace symbol search (semantic search via kbase search)
+                workspace_symbol_provider: Some(OneOf::Left(true)),
+                // Custom commands
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec![
+                        "kbase.search".to_string(),
+                        "kbase.backlinks".to_string(),
+                        "kbase.notes".to_string(),
+                        "kbase.tags".to_string(),
+                    ],
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -323,6 +418,340 @@ impl LanguageServer for KbaseLanguageServer {
         }
 
         Ok(None)
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let query = params.query.trim();
+        if query.is_empty() {
+            return Ok(None);
+        }
+
+        // Do all the embedding work synchronously, collect errors
+        let search_result: anyhow::Result<Vec<(embeddings::Chunk, f32)>> = (|| {
+            // Initialize embeddings if needed
+            self.refresh_embeddings()?;
+
+            // Compute query embedding
+            let query_embedding = {
+                let mut cache = self.embedding_cache.write().unwrap();
+                let mut backend = self.embedding_backend.write().unwrap();
+
+                match (cache.as_mut(), backend.as_mut()) {
+                    (Some(c), Some(b)) => c.get_or_compute(query, b.as_mut())?,
+                    _ => anyhow::bail!("Embeddings not initialized"),
+                }
+            };
+
+            // Search and clone results
+            let store = self.embedding_store.read().unwrap();
+            match store.as_ref() {
+                Some(s) => Ok(s.find_similar(&query_embedding, 20)
+                    .into_iter()
+                    .map(|(chunk, score)| (chunk.clone(), score))
+                    .collect()),
+                None => anyhow::bail!("No embedding store"),
+            }
+        })();
+
+        let results = match search_result {
+            Ok(r) => r,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Search failed: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        #[allow(deprecated)]
+        let symbols: Vec<SymbolInformation> = results
+            .iter()
+            .filter_map(|(chunk, score)| {
+                let uri = Url::from_file_path(&chunk.note_path).ok()?;
+                let name = if chunk.header_path.is_empty() {
+                    std::path::Path::new(&chunk.note_path)
+                        .file_stem()?
+                        .to_str()?
+                        .to_string()
+                } else {
+                    format!(
+                        "{} > {}",
+                        std::path::Path::new(&chunk.note_path).file_stem()?.to_str()?,
+                        chunk.header_path.join(" > ")
+                    )
+                };
+
+                Some(SymbolInformation {
+                    name: format!("[{:.2}] {}", score, name),
+                    kind: SymbolKind::FILE,
+                    tags: None,
+                    deprecated: None,
+                    location: Location {
+                        uri,
+                        range: Range::default(),
+                    },
+                    container_name: None,
+                })
+            })
+            .collect();
+
+        if symbols.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(symbols))
+        }
+    }
+
+    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        match params.command.as_str() {
+            "kbase.search" => self.cmd_search(&params).await,
+            "kbase.backlinks" => self.cmd_backlinks(&params).await,
+            "kbase.notes" => self.cmd_notes(&params).await,
+            "kbase.tags" => self.cmd_tags(&params).await,
+            _ => Ok(None),
+        }
+    }
+}
+
+// Command implementations
+impl KbaseLanguageServer {
+    async fn cmd_search(&self, params: &ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        let query = params.arguments
+            .get(0)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if query.is_empty() {
+            return Ok(None);
+        }
+
+        // Do semantic search
+        let search_result: anyhow::Result<Vec<(embeddings::Chunk, f32)>> = (|| {
+            self.refresh_embeddings()?;
+
+            let query_embedding = {
+                let mut cache = self.embedding_cache.write().unwrap();
+                let mut backend = self.embedding_backend.write().unwrap();
+
+                match (cache.as_mut(), backend.as_mut()) {
+                    (Some(c), Some(b)) => c.get_or_compute(query, b.as_mut())?,
+                    _ => anyhow::bail!("Embeddings not initialized"),
+                }
+            };
+
+            let store = self.embedding_store.read().unwrap();
+            match store.as_ref() {
+                Some(s) => Ok(s.find_similar(&query_embedding, 20)
+                    .into_iter()
+                    .map(|(chunk, score)| (chunk.clone(), score))
+                    .collect()),
+                None => anyhow::bail!("No embedding store"),
+            }
+        })();
+
+        let results = match search_result {
+            Ok(r) => r,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Search failed: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        // Return as array with note info
+        let locations: Vec<serde_json::Value> = results
+            .iter()
+            .filter_map(|(chunk, score)| {
+                let uri = Url::from_file_path(&chunk.note_path).ok()?;
+                let section = if chunk.header_path.is_empty() {
+                    String::new()
+                } else {
+                    chunk.header_path.join(" > ")
+                };
+                Some(serde_json::json!({
+                    "uri": uri.to_string(),
+                    "path": chunk.note_path,
+                    "line": chunk.line,
+                    "score": score,
+                    "section": section,
+                    "preview": chunk.text.chars().take(100).collect::<String>()
+                }))
+            })
+            .collect();
+
+        Ok(Some(serde_json::json!(locations)))
+    }
+
+    async fn cmd_backlinks(&self, params: &ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        let note_ref = params.arguments
+            .get(0)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if note_ref.is_empty() {
+            return Ok(None);
+        }
+
+        let vault_path = self.vault_path.read().unwrap().clone();
+        let vault_path = match vault_path {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        // Load the store to query backlinks
+        let store = match vault::load(&vault_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to load vault: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        let backlinks = match store.backlinks(note_ref) {
+            Ok(b) => b,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to get backlinks: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        // Parse backlink format "title (path)" into structured data
+        let results: Vec<serde_json::Value> = backlinks
+            .iter()
+            .filter_map(|bl| {
+                // Format is "title (path)"
+                let paren_pos = bl.rfind(" (")?;
+                let title = &bl[..paren_pos];
+                let path = bl[paren_pos + 2..].trim_end_matches(')');
+                let uri = Url::from_file_path(path).ok()?;
+                Some(serde_json::json!({
+                    "title": title,
+                    "path": path,
+                    "uri": uri.to_string()
+                }))
+            })
+            .collect();
+
+        Ok(Some(serde_json::json!(results)))
+    }
+
+    async fn cmd_notes(&self, params: &ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        let tag_filter = params.arguments
+            .get(0)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+
+        // Second argument: direct_only (default false = include descendants)
+        let direct_only = params.arguments
+            .get(1)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let vault_path = self.vault_path.read().unwrap().clone();
+        let vault_path = match vault_path {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        let store = match vault::load(&vault_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to load vault: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        let notes_list = match store.list_notes(tag_filter, direct_only) {
+            Ok(n) => n,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to list notes: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        // Parse note format "title (path)" into structured data
+        let results: Vec<serde_json::Value> = notes_list
+            .iter()
+            .filter_map(|n| {
+                let paren_pos = n.rfind(" (")?;
+                let title = &n[..paren_pos];
+                let path = n[paren_pos + 2..].trim_end_matches(')');
+                let uri = Url::from_file_path(path).ok()?;
+                Some(serde_json::json!({
+                    "title": title,
+                    "path": path,
+                    "uri": uri.to_string()
+                }))
+            })
+            .collect();
+
+        Ok(Some(serde_json::json!(results)))
+    }
+
+    async fn cmd_tags(&self, params: &ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        let filter = params.arguments
+            .get(0)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+
+        let show_notes = params.arguments
+            .get(1)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let vault_path = self.vault_path.read().unwrap().clone();
+        let vault_path = match vault_path {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        let store = match vault::load(&vault_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to load vault: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        let tree = match store.list_tags(filter, show_notes) {
+            Ok(t) => t,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to list tags: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        // Get flat list of all tag paths
+        let flat_tags = match store.all_tags() {
+            Ok(t) => t,
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to get tags: {}", e))
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(serde_json::json!({
+            "tree": tree,
+            "tags": flat_tags
+        })))
     }
 }
 
