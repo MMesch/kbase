@@ -1,3 +1,13 @@
+//! Embedding generation and semantic search for notes.
+//!
+//! This module provides:
+//! - **Backends**: Generate embeddings via ONNX (local) or Ollama (server)
+//! - **Cache**: Content-addressed storage of embeddings in redb (`.kbase/embeddings.redb`)
+//! - **Store**: In-memory index for similarity search across note chunks
+//! - **Chunking**: Split notes by headers or paragraphs for granular search
+//!
+//! Used by the LSP's semantic search and `kbase search` command.
+
 use anyhow::{Context, Result};
 use ndarray::{Array1, Array2, ArrayViewD};
 use ort::session::{builder::GraphOptimizationLevel, Session};
@@ -66,6 +76,8 @@ impl EmbeddingBackend for OllamaBackend {
         let url = format!("{}/api/embed", self.base_url);
         let mut results = Vec::new();
 
+        // TODO: Ollama's /api/embed supports batch input - could send all texts
+        // in one request instead of looping. Would reduce HTTP overhead.
         for text in texts {
             let request = OllamaEmbedRequest {
                 model: &self.model,
@@ -78,10 +90,9 @@ impl EmbeddingBackend for OllamaBackend {
                 .into_json()
                 .context("Failed to parse Ollama response")?;
 
-            if let Some(embedding) = response.embeddings.into_iter().next() {
-                results.push(embedding);
-            } else {
-                anyhow::bail!("No embedding returned from Ollama");
+            match response.embeddings.into_iter().next() {
+                Some(embedding) => results.push(embedding),
+                None => anyhow::bail!("No embedding returned from Ollama"),
             }
         }
 
@@ -123,11 +134,14 @@ impl OnnxBackend {
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cache")));
 
-        if let Some(cache) = cache_dir {
-            let global_dir = cache.join("kbase/models");
-            if has_model(&global_dir) {
-                return Ok(global_dir);
+        match cache_dir {
+            Some(cache) => {
+                let global_dir = cache.join("kbase/models");
+                if has_model(&global_dir) {
+                    return Ok(global_dir);
+                }
             }
+            None => {}
         }
 
         // Neither found - show helpful error with XDG path
@@ -145,6 +159,7 @@ impl OnnxBackend {
 
     /// Create backend from model directory containing model.onnx and tokenizer.json
     pub fn new(model_dir: &Path) -> Result<Self> {
+        tracing::info!("Loading ONNX model from: {}", model_dir.display());
         let model_path = model_dir.join("model.onnx");
         let tokenizer_path = model_dir.join("tokenizer.json");
 
@@ -175,7 +190,19 @@ impl OnnxBackend {
         Ok(Self { session, tokenizer })
     }
 
-    /// Mean pooling over token embeddings with attention mask
+    /// Aggregate per-token embeddings into a single sentence embedding.
+    ///
+    /// The transformer outputs one 384-dim vector per token, but each vector already
+    /// encodes context from the full sentence (via self-attention layers). Mean pooling
+    /// averages these context-aware vectors, then L2-normalizes for cosine similarity.
+    ///
+    /// The `attention_mask` indicates real tokens (1) vs padding (0). Models expect
+    /// fixed-length input, so short texts are padded. The mask ensures we only average
+    /// real tokens: `["Hello", "world", PAD, PAD]` with mask `[1, 1, 0, 0]` averages
+    /// only the first two embeddings.
+    ///
+    /// Alternative approach: use only the [CLS] token embedding, which is trained to
+    /// capture sentence-level meaning. Mean pooling is often more robust for similarity.
     fn mean_pooling(embeddings: ArrayViewD<f32>, attention_mask: &[i64]) -> Array1<f32> {
         let shape = embeddings.shape();
         let seq_len = shape[1];
@@ -212,12 +239,16 @@ impl EmbeddingBackend for OnnxBackend {
     fn embed(&mut self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let mut results = Vec::with_capacity(texts.len());
 
+        // Process texts individually rather than batching. ONNX supports batching, but it
+        // requires padding all texts to the longest one. With diverse chunk sizes (10 vs 500
+        // tokens), padding overhead can outweigh batching benefits on CPU.
         for text in texts {
             let encoding = self
                 .tokenizer
                 .encode(*text, true)
                 .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
 
+            // Tokenizer returns u32, but ONNX models expect i64 (PyTorch convention)
             let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
             let attention_mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&x| x as i64).collect();
             let token_type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&x| x as i64).collect();
@@ -261,8 +292,9 @@ impl EmbeddingCache {
     /// Open or create cache at the given path
     pub fn open(path: &Path) -> Result<Self> {
         // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).context("Failed to create cache directory")?;
+        match path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent).context("Failed to create cache directory")?,
+            None => {}  // no parent directory needed (e.g., path is just a filename)
         }
         let db = Database::create(path).context("Failed to open embedding cache")?;
         Ok(Self { db })
@@ -281,6 +313,7 @@ impl EmbeddingCache {
         let read_txn = self.db.begin_read().ok()?;
         let table = read_txn.open_table(EMBEDDINGS_TABLE).ok()?;
         let value = table.get(hash.as_str()).ok()??;
+        // Deserialize bytes back to f32 (4 bytes each, little-endian)
         let bytes = value.value();
         Some(
             bytes
@@ -293,6 +326,7 @@ impl EmbeddingCache {
     /// Store embedding in cache
     pub fn put(&self, text: &str, embedding: &[f32]) -> Result<()> {
         let hash = Self::content_hash(text);
+        // Serialize f32 to bytes (4 bytes each, little-endian) for redb storage
         let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
         let write_txn = self.db.begin_write().context("Failed to begin write transaction")?;
         {
@@ -313,8 +347,9 @@ impl EmbeddingCache {
         text: &str,
         backend: &mut B,
     ) -> Result<Vec<f32>> {
-        if let Some(embedding) = self.get(text) {
-            return Ok(embedding);
+        match self.get(text) {
+            Some(embedding) => return Ok(embedding),
+            None => {}  // continue to compute
         }
 
         // Not cached, compute and store
@@ -339,10 +374,9 @@ impl EmbeddingCache {
 
         // Check cache first
         for (i, text) in texts.iter().enumerate() {
-            if let Some(embedding) = self.get(text) {
-                results.push((i, embedding));
-            } else {
-                to_compute.push((i, text));
+            match self.get(text) {
+                Some(embedding) => results.push((i, embedding)),
+                None => to_compute.push((i, text)),
             }
         }
 
@@ -480,9 +514,6 @@ pub fn split_into_chunks(content: &str, level: ChunkLevel) -> Vec<(Vec<String>, 
 }
 
 fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String, u32)> {
-    let prefix = "#".repeat(level);
-    let _pattern = format!("\n{} ", prefix);
-
     let mut chunks = Vec::new();
     let mut current_headers: Vec<String> = Vec::new();
     let mut current_text = String::new();
@@ -507,9 +538,10 @@ fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String, u32
 
                 // Truncate headers to current level and add new one
                 current_headers.truncate(header_level.saturating_sub(1));
-                current_headers.push(header_text);
+                current_headers.push(header_text.clone());
 
-                current_text = String::new();
+                // Start new chunk with header included in text for better embeddings
+                current_text = format!("{}\n", header_text);
                 current_start_line = line_number;
                 line_number += 1;
                 continue;
