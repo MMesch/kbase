@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use tracing_subscriber::EnvFilter;
 
 use kbase::{config, config::Config, embeddings, lsp, note, schema, skills, vault};
 
@@ -50,6 +51,9 @@ enum Commands {
     /// Validate notes against schema
     Validate,
     /// Find similar notes using embeddings
+    ///
+    /// Requires ONNX model files (model.onnx, tokenizer.json) in one of:
+    /// ./models, <vault>/models, or $XDG_CACHE_HOME/kbase/models
     Similar {
         /// Note to find similar notes for (title or path)
         note: String,
@@ -58,6 +62,9 @@ enum Commands {
         limit: usize,
     },
     /// Semantic search across notes
+    ///
+    /// Requires ONNX model files (model.onnx, tokenizer.json) in one of:
+    /// ./models, <vault>/models, or $XDG_CACHE_HOME/kbase/models
     Search {
         /// Search query
         query: String,
@@ -75,6 +82,12 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
+    // Initialize tracing (controlled by RUST_LOG env var, e.g. RUST_LOG=debug)
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = Cli::parse();
 
     let get_vault = || -> Result<PathBuf> {
