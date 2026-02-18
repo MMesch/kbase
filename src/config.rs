@@ -1,3 +1,7 @@
+//! Configuration types for kbase vaults.
+//!
+//! Maps to `.kbase/config.yaml` in the vault root.
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -28,21 +32,12 @@ pub enum EmbeddingBackend {
     Ollama, // Ollama server
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
     pub link_syntax: LinkSyntax,
     #[serde(default)]
     pub embeddings: EmbeddingsConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            link_syntax: LinkSyntax::Wiki,
-            embeddings: EmbeddingsConfig::default(),
-        }
-    }
 }
 
 impl Config {
