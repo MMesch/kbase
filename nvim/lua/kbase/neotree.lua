@@ -8,7 +8,7 @@ M.setup = function(opts)
 
   local ok, neo_tree = pcall(require, "neo-tree")
   if not ok then
-    vim.notify("kbase-neotree: neo-tree.nvim not found", vim.log.levels.WARN)
+    vim.notify("kbase: neo-tree.nvim not found", vim.log.levels.WARN)
     return
   end
 

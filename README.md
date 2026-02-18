@@ -138,45 +138,60 @@ Add to your `coc-settings.json`:
 
 ## Neovim Integrations
 
-kbase includes additional Neovim plugins for enhanced editing experience.
+kbase includes a Neovim plugin for enhanced editing with Telescope pickers and Neo-tree integration.
 
-### Telescope Pickers
+### Installation
 
-Fuzzy search and semantic search via Telescope:
-
+**lazy.nvim:**
 ```lua
--- Add to your runtimepath
-vim.opt.runtimepath:append("/path/to/kbase/extras/lua")
-
--- Setup telescope extension
-require("telescope-kbase").setup()
+{
+  "your-user/kbase",
+  dir = "nvim",  -- Use the nvim/ subdirectory
+  dependencies = {
+    "nvim-telescope/telescope.nvim",
+    "nvim-neo-tree/neo-tree.nvim",  -- optional
+  },
+  config = function()
+    require("kbase").setup({
+      telescope_prefix = "<leader>k",  -- Keymaps: <leader>ks, <leader>kb, etc.
+      neotree_keymap = "<leader>kT",   -- Optional: keymap for tag tree
+    })
+  end,
+}
 ```
 
-**Keymaps (customize as needed):**
-
-```lua
-vim.keymap.set("n", "<leader>ks", require("telescope-kbase").search, { desc = "kbase: semantic search" })
-vim.keymap.set("n", "<leader>kn", require("telescope-kbase").notes, { desc = "kbase: browse notes" })
-vim.keymap.set("n", "<leader>kt", require("telescope-kbase").tags, { desc = "kbase: browse tags" })
-vim.keymap.set("n", "<leader>kb", require("telescope-kbase").backlinks, { desc = "kbase: backlinks" })
+**Nix (Home Manager):**
+```nix
+programs.neovim.plugins = [
+  {
+    plugin = pkgs.vimUtils.buildVimPlugin {
+      pname = "kbase-nvim";
+      version = "0.1.0";
+      src = "${kbase}/nvim";
+    };
+    config = ''
+      lua require("kbase").setup()
+    '';
+  }
+];
 ```
 
-### Neo-tree Tag Browser
-
-Hierarchical tag tree similar to Obsidian's tag pane:
-
+**Manual:**
 ```lua
--- Add to your runtimepath
-vim.opt.runtimepath:append("/path/to/kbase/extras/lua")
-vim.opt.runtimepath:append("/path/to/kbase/extras/lua/neo-tree/sources")
-
--- Setup after neo-tree
-require("kbase-neotree").setup({
-  keymap = "<leader>kt",  -- Optional: set a keymap
-})
+vim.opt.runtimepath:append("/path/to/kbase/nvim")
+require("kbase").setup()
 ```
 
-Open with `:KbaseTags` or your configured keymap. Features:
+### Features
+
+**Telescope Pickers** (`<leader>k` prefix by default):
+- `<leader>ks` - Semantic search across notes
+- `<leader>kb` - Backlinks to current note
+- `<leader>kn` - Browse all notes
+- `<leader>kt` - Browse tags
+
+**Neo-tree Tag Browser:**
+- `:KbaseTags` or configured keymap
 - Hierarchical tag tree with lazy-loaded children
 - Notes shown under their direct tags (no duplicates)
 - Press Enter to expand tags or open notes
