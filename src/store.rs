@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::time::SystemTime;
+
 use anyhow::Result;
 use oxigraph::model::*;
 use oxigraph::sparql::QueryResults;
@@ -18,8 +21,74 @@ impl Store {
         Ok(Self { inner })
     }
 
+    /// Open or create a persistent store at the given path
+    pub fn open(path: &Path) -> Result<Self> {
+        let inner = OxiStore::open(path)?;
+        Ok(Self { inner })
+    }
+
+    /// Get the stored mtime for a note (as unix timestamp)
+    pub fn get_note_mtime(&self, path: &str) -> Result<Option<u64>> {
+        let note_iri = self.note_iri(path);
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?mtime WHERE {{
+                <{}> kb:mtime ?mtime .
+            }}
+            "#,
+            note_iri.as_str()
+        );
+
+        if let QueryResults::Solutions(mut solutions) = self.inner.query(&query)? {
+            if let Some(solution) = solutions.next() {
+                let solution = solution?;
+                if let Some(Term::Literal(mtime)) = solution.get("mtime") {
+                    if let Ok(ts) = mtime.value().parse::<u64>() {
+                        return Ok(Some(ts));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Get all stored note paths
+    pub fn get_all_note_paths(&self) -> Result<Vec<String>> {
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?path WHERE {{
+                ?note kb:type kb:Note .
+                ?note kb:path ?path .
+            }}
+            "#
+        );
+
+        let mut paths = Vec::new();
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions {
+                let solution = solution?;
+                if let Some(Term::Literal(path)) = solution.get("path") {
+                    paths.push(path.value().to_string());
+                }
+            }
+        }
+        Ok(paths)
+    }
+
+    /// Remove a note completely (for deleted files)
+    pub fn remove_note(&self, path: &str) -> Result<()> {
+        self.remove_note_triples(path)
+    }
+
     /// Insert or update a note in the graph
     pub fn upsert_note(&self, note: &Note) -> Result<()> {
+        self.upsert_note_with_mtime(note, None)
+    }
+
+    /// Insert or update a note with explicit mtime tracking
+    pub fn upsert_note_with_mtime(&self, note: &Note, mtime: Option<SystemTime>) -> Result<()> {
         let path_str = note.path.to_string_lossy();
         let note_iri = self.note_iri(&path_str);
 
@@ -49,6 +118,18 @@ impl Store {
             Literal::new_simple_literal(note.path.to_string_lossy()),
             GraphNameRef::DefaultGraph,
         ))?;
+
+        // Add mtime if provided
+        if let Some(mtime) = mtime {
+            if let Ok(duration) = mtime.duration_since(SystemTime::UNIX_EPOCH) {
+                self.inner.insert(&Quad::new(
+                    note_iri.clone(),
+                    self.iri("mtime"),
+                    Literal::new_simple_literal(duration.as_secs().to_string()),
+                    GraphNameRef::DefaultGraph,
+                ))?;
+            }
+        }
 
         // Add tags and tag hierarchy
         for tag in &note.tags {

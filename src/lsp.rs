@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
+use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
+use tokio::sync::mpsc;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -9,6 +12,7 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 use crate::config::{self, Config};
 use crate::embeddings::{self, EmbeddingBackend, EmbeddingCache, EmbeddingStore};
 use crate::note::{self, Link, Note};
+use crate::store::Store;
 use crate::vault;
 
 /// LSP backend for kbase
@@ -24,10 +28,17 @@ pub struct KbaseLanguageServer {
     embedding_cache: RwLock<Option<EmbeddingCache>>,
     /// Embedding backend
     embedding_backend: RwLock<Option<Box<dyn EmbeddingBackend + Send + Sync>>>,
+    /// Persistent graph store
+    graph_store: RwLock<Option<Arc<Store>>>,
+    /// Channel to receive file change events
+    file_change_rx: RwLock<Option<mpsc::UnboundedReceiver<PathBuf>>>,
+    /// Sender for file changes (kept to allow cloning for watcher)
+    file_change_tx: mpsc::UnboundedSender<PathBuf>,
 }
 
 impl KbaseLanguageServer {
     pub fn new(client: Client) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
         Self {
             client,
             notes: RwLock::new(HashMap::new()),
@@ -35,7 +46,127 @@ impl KbaseLanguageServer {
             embedding_store: RwLock::new(None),
             embedding_cache: RwLock::new(None),
             embedding_backend: RwLock::new(None),
+            graph_store: RwLock::new(None),
+            file_change_rx: RwLock::new(Some(rx)),
+            file_change_tx: tx,
         }
+    }
+
+    /// Initialize persistent store and file watcher
+    fn init_persistent_store(&self) -> anyhow::Result<usize> {
+        let vault_path = self.vault_path.read().unwrap().clone();
+        let vault_path = vault_path.ok_or_else(|| anyhow::anyhow!("No vault path"))?;
+
+        // Load persistent store with incremental updates
+        let (store, updated) = vault::load_persistent(&vault_path)?;
+        let store = Arc::new(store);
+
+        *self.graph_store.write().unwrap() = Some(store);
+
+        Ok(updated)
+    }
+
+    /// Start file watcher for the vault
+    fn start_file_watcher(&self) -> anyhow::Result<()> {
+        let vault_path = self.vault_path.read().unwrap().clone();
+        let vault_path = vault_path.ok_or_else(|| anyhow::anyhow!("No vault path"))?;
+
+        let tx = self.file_change_tx.clone();
+
+        // Create debounced watcher (500ms debounce)
+        let mut debouncer = new_debouncer(
+            Duration::from_millis(500),
+            move |res: std::result::Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {
+                if let Ok(events) = res {
+                    for event in events {
+                        if event.kind == DebouncedEventKind::Any {
+                            // Only process markdown files
+                            if event.path.extension().is_some_and(|ext| ext == "md") {
+                                let _ = tx.send(event.path);
+                            }
+                        }
+                    }
+                }
+            },
+        )?;
+
+        // Watch the vault directory recursively
+        debouncer
+            .watcher()
+            .watch(&vault_path, notify::RecursiveMode::Recursive)?;
+
+        // Keep the watcher alive by leaking it (it will live for the duration of the LSP)
+        // This is intentional - the watcher needs to stay alive
+        std::mem::forget(debouncer);
+
+        Ok(())
+    }
+
+    /// Process pending file changes
+    async fn process_file_changes(&self) {
+        let vault_path = self.vault_path.read().unwrap().clone();
+        let Some(vault_path) = vault_path else {
+            return;
+        };
+
+        let config = match Config::load(&vault_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        // Take the receiver temporarily
+        let mut rx = match self.file_change_rx.write().unwrap().take() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        // Process all pending changes
+        let mut changed_paths = Vec::new();
+        while let Ok(path) = rx.try_recv() {
+            changed_paths.push(path);
+        }
+
+        // Put the receiver back
+        *self.file_change_rx.write().unwrap() = Some(rx);
+
+        if changed_paths.is_empty() {
+            return;
+        }
+
+        // Update graph store
+        let store = self.graph_store.read().unwrap().clone();
+        if let Some(store) = store {
+            for path in &changed_paths {
+                if let Err(e) = vault::update_note(&store, path, config.link_syntax) {
+                    self.client
+                        .log_message(MessageType::WARNING, format!("Failed to update {}: {}", path.display(), e))
+                        .await;
+                }
+            }
+            self.client
+                .log_message(MessageType::INFO, format!("Updated {} notes from file changes", changed_paths.len()))
+                .await;
+        }
+
+        // Also refresh the notes cache for LSP features
+        self.refresh_notes().await;
+    }
+
+    /// Get the graph store, initializing if needed
+    fn get_or_init_store(&self) -> anyhow::Result<Arc<Store>> {
+        // Check if already initialized
+        if let Some(store) = self.graph_store.read().unwrap().clone() {
+            return Ok(store);
+        }
+
+        // Initialize
+        self.init_persistent_store()?;
+
+        self.graph_store
+            .read()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Failed to initialize store"))
     }
 
     /// Initialize embeddings (called lazily on first search)
@@ -255,6 +386,35 @@ impl LanguageServer for KbaseLanguageServer {
         self.client
             .log_message(MessageType::INFO, "kbase LSP initialized")
             .await;
+
+        // Initialize persistent store
+        match self.init_persistent_store() {
+            Ok(updated) => {
+                self.client
+                    .log_message(MessageType::INFO, format!("Loaded graph store ({} notes updated)", updated))
+                    .await;
+            }
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::WARNING, format!("Failed to init persistent store: {}", e))
+                    .await;
+            }
+        }
+
+        // Start file watcher
+        match self.start_file_watcher() {
+            Ok(()) => {
+                self.client
+                    .log_message(MessageType::INFO, "File watcher started")
+                    .await;
+            }
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::WARNING, format!("Failed to start file watcher: {}", e))
+                    .await;
+            }
+        }
+
         self.refresh_notes().await;
     }
 
@@ -266,7 +426,33 @@ impl LanguageServer for KbaseLanguageServer {
         self.refresh_notes().await;
     }
 
-    async fn did_save(&self, _params: DidSaveTextDocumentParams) {
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        // Update the specific file in the graph store
+        if let Ok(path) = params.text_document.uri.to_file_path() {
+            let vault_path = self.vault_path.read().unwrap().clone();
+            let store = self.graph_store.read().unwrap().clone();
+
+            if let (Some(vault_path), Some(store)) = (vault_path, store) {
+                if let Ok(config) = Config::load(&vault_path) {
+                    match vault::update_note(&store, &path, config.link_syntax) {
+                        Err(e) => {
+                            self.client
+                                .log_message(MessageType::WARNING, format!("Failed to update note: {}", e))
+                                .await;
+                        }
+                        Ok(()) => {
+                            self.client
+                                .log_message(MessageType::INFO, format!("Updated: {}", path.display()))
+                                .await;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also process any pending file watcher events
+        self.process_file_changes().await;
+
         self.refresh_notes().await;
     }
 
@@ -596,18 +782,12 @@ impl KbaseLanguageServer {
             return Ok(None);
         }
 
-        let vault_path = self.vault_path.read().unwrap().clone();
-        let vault_path = match vault_path {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-
-        // Load the store to query backlinks
-        let store = match vault::load(&vault_path) {
+        // Use persistent store
+        let store = match self.get_or_init_store() {
             Ok(s) => s,
             Err(e) => {
                 self.client
-                    .log_message(MessageType::ERROR, format!("Failed to load vault: {}", e))
+                    .log_message(MessageType::ERROR, format!("Failed to get store: {}", e))
                     .await;
                 return Ok(None);
             }
@@ -655,17 +835,12 @@ impl KbaseLanguageServer {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let vault_path = self.vault_path.read().unwrap().clone();
-        let vault_path = match vault_path {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-
-        let store = match vault::load(&vault_path) {
+        // Use persistent store
+        let store = match self.get_or_init_store() {
             Ok(s) => s,
             Err(e) => {
                 self.client
-                    .log_message(MessageType::ERROR, format!("Failed to load vault: {}", e))
+                    .log_message(MessageType::ERROR, format!("Failed to get store: {}", e))
                     .await;
                 return Ok(None);
             }
@@ -711,17 +886,12 @@ impl KbaseLanguageServer {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let vault_path = self.vault_path.read().unwrap().clone();
-        let vault_path = match vault_path {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-
-        let store = match vault::load(&vault_path) {
+        // Use persistent store
+        let store = match self.get_or_init_store() {
             Ok(s) => s,
             Err(e) => {
                 self.client
-                    .log_message(MessageType::ERROR, format!("Failed to load vault: {}", e))
+                    .log_message(MessageType::ERROR, format!("Failed to get store: {}", e))
                     .await;
                 return Ok(None);
             }

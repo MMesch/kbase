@@ -36,5 +36,9 @@ sha2 = "0.10"
 
 # LSP server
 tower-lsp = "0.20"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-std", "macros", "sync"] }
+
+# File watching
+notify = "8"
+notify-debouncer-mini = "0.6"
 

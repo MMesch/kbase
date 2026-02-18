@@ -1,9 +1,11 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 // Import the kbase library modules
 use kbase::config::{Config, LinkSyntax};
 use kbase::note;
+use kbase::store::Store;
 use kbase::vault;
 
 fn specs_path() -> PathBuf {
@@ -192,4 +194,182 @@ fn list_tags_with_notes() {
         "Should have notes in brackets, got: {:?}",
         tree
     );
+}
+
+// ============================================================================
+// Persistent storage tests
+// ============================================================================
+
+fn temp_db_path(name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = env::temp_dir().join(format!("kbase-test-{}-{}-{}", std::process::id(), name, unique));
+    fs::create_dir_all(&dir).expect("Failed to create temp dir");
+    dir.join("test.db")
+}
+
+fn cleanup_temp_db(path: &PathBuf) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::remove_dir_all(parent);
+    }
+}
+
+#[test]
+fn persistent_store_opens_and_persists() {
+    let db_path = temp_db_path("opens");
+
+    // Create store and insert a note
+    {
+        let store = Store::open(&db_path).expect("Failed to open store");
+        let note = note::Note {
+            title: "Test Note".to_string(),
+            path: PathBuf::from("/tmp/test.md"),
+            tags: vec!["test".to_string()],
+            fields: Default::default(),
+            links: vec![],
+        };
+        store.upsert_note(&note).expect("Failed to insert note");
+
+        let notes = store.list_notes(None, false).expect("Failed to list");
+        assert_eq!(notes.len(), 1);
+    }
+
+    // Reopen and verify data persisted
+    {
+        let store = Store::open(&db_path).expect("Failed to reopen store");
+        let notes = store.list_notes(None, false).expect("Failed to list");
+        assert_eq!(notes.len(), 1, "Note should persist across reopens");
+        assert!(notes[0].contains("Test Note"));
+    }
+
+    cleanup_temp_db(&db_path);
+}
+
+#[test]
+fn persistent_store_tracks_mtime() {
+    let db_path = temp_db_path("mtime");
+
+    let store = Store::open(&db_path).expect("Failed to open store");
+    let note = note::Note {
+        title: "Mtime Test".to_string(),
+        path: PathBuf::from("/tmp/mtime-test.md"),
+        tags: vec![],
+        fields: Default::default(),
+        links: vec![],
+    };
+
+    // Insert without mtime
+    store.upsert_note(&note).expect("Failed to insert");
+    let mtime = store
+        .get_note_mtime("/tmp/mtime-test.md")
+        .expect("Failed to get mtime");
+    assert!(mtime.is_none(), "Should have no mtime initially");
+
+    // Insert with mtime
+    use std::time::{Duration, SystemTime};
+    let test_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1700000000);
+    store
+        .upsert_note_with_mtime(&note, Some(test_time))
+        .expect("Failed to insert with mtime");
+
+    let mtime = store
+        .get_note_mtime("/tmp/mtime-test.md")
+        .expect("Failed to get mtime");
+    assert_eq!(mtime, Some(1700000000), "Should have stored mtime");
+
+    cleanup_temp_db(&db_path);
+}
+
+#[test]
+fn persistent_store_lists_all_paths() {
+    let db_path = temp_db_path("paths");
+
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    // Insert multiple notes
+    for i in 1..=3 {
+        let note = note::Note {
+            title: format!("Note {}", i),
+            path: PathBuf::from(format!("/tmp/note{}.md", i)),
+            tags: vec![],
+            fields: Default::default(),
+            links: vec![],
+        };
+        store.upsert_note(&note).expect("Failed to insert");
+    }
+
+    let paths = store.get_all_note_paths().expect("Failed to get paths");
+    assert_eq!(paths.len(), 3);
+    assert!(paths.iter().any(|p| p.contains("note1.md")));
+    assert!(paths.iter().any(|p| p.contains("note2.md")));
+    assert!(paths.iter().any(|p| p.contains("note3.md")));
+
+    cleanup_temp_db(&db_path);
+}
+
+#[test]
+fn persistent_store_removes_notes() {
+    let db_path = temp_db_path("removes");
+
+    let store = Store::open(&db_path).expect("Failed to open store");
+    let note = note::Note {
+        title: "To Delete".to_string(),
+        path: PathBuf::from("/tmp/delete-me.md"),
+        tags: vec!["deletable".to_string()],
+        fields: Default::default(),
+        links: vec![],
+    };
+
+    store.upsert_note(&note).expect("Failed to insert");
+    assert_eq!(store.list_notes(None, false).unwrap().len(), 1);
+
+    store.remove_note("/tmp/delete-me.md").expect("Failed to remove");
+    assert_eq!(store.list_notes(None, false).unwrap().len(), 0);
+
+    cleanup_temp_db(&db_path);
+}
+
+#[test]
+fn load_persistent_does_incremental_update() {
+    // Use a temp copy of specs to avoid locking the real vault
+    let temp_vault = env::temp_dir().join(format!("kbase-vault-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_vault); // Clean up any previous run
+
+    // Copy specs to temp location
+    fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
+        fs::create_dir_all(dst).unwrap();
+        for entry in fs::read_dir(src).unwrap() {
+            let entry = entry.unwrap();
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+            if src_path.is_dir() {
+                copy_dir_recursive(&src_path, &dst_path);
+            } else {
+                fs::copy(&src_path, &dst_path).unwrap();
+            }
+        }
+    }
+    copy_dir_recursive(&specs_path(), &temp_vault);
+
+    // First load - should process all notes
+    let notes_count;
+    {
+        let (store1, updated1) = vault::load_persistent(&temp_vault).expect("Failed to load");
+        let notes1 = store1.list_notes(None, false).expect("Failed to list");
+        assert!(!notes1.is_empty(), "Should have loaded notes");
+        assert!(updated1 > 0, "First load should update notes");
+        notes_count = notes1.len();
+    } // store1 dropped here, releasing lock
+
+    // Second load - nothing changed, should update 0
+    {
+        let (store2, updated2) = vault::load_persistent(&temp_vault).expect("Failed to reload");
+        let notes2 = store2.list_notes(None, false).expect("Failed to list");
+        assert_eq!(notes_count, notes2.len(), "Should have same notes");
+        assert_eq!(updated2, 0, "Second load should update 0 notes (nothing changed)");
+    }
+
+    // Cleanup
+    let _ = fs::remove_dir_all(&temp_vault);
 }

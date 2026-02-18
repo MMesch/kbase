@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, bail};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use walkdir::WalkDir;
 
 use crate::config::Config;
@@ -8,6 +10,7 @@ use crate::note;
 use crate::store::Store;
 
 const KBASE_DIR: &str = ".kbase";
+const GRAPH_DB: &str = "graph.db";
 
 /// Initialize a new vault at the given path
 pub fn init(path: &Path) -> Result<()> {
@@ -48,6 +51,82 @@ pub fn load(vault_path: &Path) -> Result<Store> {
     }
 
     Ok(store)
+}
+
+/// Open or create a persistent store, performing incremental updates
+/// Returns the store and the number of notes updated
+pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
+    let db_path = vault_path.join(KBASE_DIR).join(GRAPH_DB);
+    let store = Store::open(&db_path)?;
+    let config = Config::load(vault_path)?;
+
+    // Get all stored note paths
+    let stored_paths: HashSet<String> = store.get_all_note_paths()?.into_iter().collect();
+
+    // Scan filesystem for current notes
+    let mut current_paths: HashSet<String> = HashSet::new();
+    let mut updated = 0;
+
+    for entry in WalkDir::new(vault_path)
+        .into_iter()
+        .filter_entry(|e| !is_hidden(e))
+    {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !path.extension().is_some_and(|ext| ext == "md") {
+            continue;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        current_paths.insert(path_str.clone());
+
+        // Get file mtime
+        let metadata = fs::metadata(path)?;
+        let file_mtime = metadata.modified().ok();
+        let file_mtime_secs = file_mtime
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+
+        // Check if we need to update this note
+        let stored_mtime = store.get_note_mtime(&path_str)?;
+        let needs_update = match (file_mtime_secs, stored_mtime) {
+            (Some(file_ts), Some(stored_ts)) => file_ts > stored_ts,
+            (Some(_), None) => true, // New file
+            _ => true,               // Can't determine, update anyway
+        };
+
+        if needs_update {
+            if let Ok(parsed) = note::parse(path, config.link_syntax) {
+                store.upsert_note_with_mtime(&parsed, file_mtime)?;
+                updated += 1;
+            }
+        }
+    }
+
+    // Remove notes that no longer exist
+    for stored_path in stored_paths {
+        if !current_paths.contains(&stored_path) {
+            store.remove_note(&stored_path)?;
+            updated += 1;
+        }
+    }
+
+    Ok((store, updated))
+}
+
+/// Update a single note in the persistent store
+pub fn update_note(store: &Store, path: &Path, link_syntax: crate::config::LinkSyntax) -> Result<()> {
+    if path.exists() {
+        let metadata = fs::metadata(path)?;
+        let mtime = metadata.modified().ok();
+        let parsed = note::parse(path, link_syntax)?;
+        store.upsert_note_with_mtime(&parsed, mtime)?;
+    } else {
+        // File was deleted
+        store.remove_note(&path.to_string_lossy())?;
+    }
+    Ok(())
 }
 
 /// Load all notes as parsed Note structs

@@ -2,3 +2,4 @@
 /models
 *.redb
 result
+graph.db/
