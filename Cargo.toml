@@ -20,6 +20,7 @@ walkdir = "2"
 regex = "1"
 anyhow = "1"
 thiserror = "1"
+urlencoding = "2"
 
 # Embeddings
 ort = { version = "2.0.0-rc.11", default-features = false, features = ["ndarray", "load-dynamic"] }

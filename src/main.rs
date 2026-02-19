@@ -79,6 +79,15 @@ enum Commands {
     Lsp,
     /// Install Claude Code skills for this vault
     InstallSkills,
+    /// Export vault graph to DOT or GraphML format
+    Export {
+        /// Output format: dot or graphml
+        #[arg(short, long, default_value = "dot")]
+        format: String,
+        /// Output file (defaults to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -359,6 +368,24 @@ fn main() -> Result<()> {
             }
             let cwd = std::env::current_dir()?;
             println!("\nSkills installed to {}/.claude/skills/", cwd.display());
+        }
+        Commands::Export { format, output } => {
+            let vault_path = get_vault()?;
+            let store = vault::load(&vault_path)?;
+
+            let content = match format.as_str() {
+                "dot" => store.export_dot()?,
+                "graphml" => store.export_graphml()?,
+                _ => anyhow::bail!("Unknown format: {}. Use 'dot' or 'graphml'", format),
+            };
+
+            match output {
+                Some(path) => {
+                    std::fs::write(&path, &content)?;
+                    eprintln!("Exported to {}", path.display());
+                }
+                None => print!("{}", content),
+            }
         }
     }
 

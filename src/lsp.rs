@@ -705,7 +705,33 @@ impl LanguageServer for KbaseLanguageServer {
         if let Some(content) = content {
             // Check for tag path (e.g., domain/ai) in frontmatter
             if let Some(tag_path) = self.get_tag_at_position(&content, position) {
-                // Navigate to the last segment (parent note)
+                // Get all notes with this tag or any descendant tag
+                let store = self.graph_store.read().unwrap();
+                if let Some(store) = store.as_ref() {
+                    if let Ok(note_titles) = store.list_notes(Some(&tag_path), false) {
+                        let locations: Vec<Location> = note_titles
+                            .iter()
+                            .filter_map(|title| {
+                                // title format is "Title (path)" - extract path
+                                let path_start = title.rfind('(')?;
+                                let path_end = title.rfind(')')?;
+                                let path_str = &title[path_start + 1..path_end];
+                                let note_path = std::path::PathBuf::from(path_str);
+                                let uri = Url::from_file_path(&note_path).ok()?;
+                                Some(Location {
+                                    uri,
+                                    range: Range::default(),
+                                })
+                            })
+                            .collect();
+
+                        if !locations.is_empty() {
+                            return Ok(Some(GotoDefinitionResponse::Array(locations)));
+                        }
+                    }
+                }
+
+                // Fallback: navigate to the parent note (last segment)
                 if let Some(parent) = tag_path.split('/').last() {
                     if let Some(note) = self.find_note_by_title(parent) {
                         let target_uri = Url::from_file_path(&note.path).ok();

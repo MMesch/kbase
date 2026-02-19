@@ -377,3 +377,212 @@ fn load_persistent_does_incremental_update() {
     // Cleanup
     let _ = fs::remove_dir_all(&temp_vault);
 }
+
+// ============================================================================
+// Tree structure tests
+// ============================================================================
+
+#[test]
+fn note_is_tree_node() {
+    let db_path = temp_db_path("note-is-tree");
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    // Create a note titled "ai" with tag domain/ai
+    // This note IS the "ai" node in the domain tree
+    let ai_note = note::Note {
+        title: "ai".to_string(),
+        path: PathBuf::from("/tmp/ai.md"),
+        tags: vec!["domain/ai".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&ai_note).expect("Failed to insert ai note");
+
+    // Create a child note under ai
+    let llm_note = note::Note {
+        title: "llms".to_string(),
+        path: PathBuf::from("/tmp/llms.md"),
+        tags: vec!["domain/ai/llms".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai/llms").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&llm_note).expect("Failed to insert llm note");
+
+    // "ai" should be a child of "domain" in the tree
+    let domain_children = store.tree_children("domain", "domain").expect("Failed to get children");
+    assert!(
+        domain_children.contains(&"ai".to_string()),
+        "ai should be child of domain, got: {:?}",
+        domain_children
+    );
+
+    // "llms" should be a child of "ai"
+    let ai_children = store.tree_children("domain", "ai").expect("Failed to get ai children");
+    assert!(
+        ai_children.contains(&"llms".to_string()),
+        "llms should be child of ai, got: {:?}",
+        ai_children
+    );
+
+    // Both notes should be listable
+    let notes = store.list_notes(None, false).expect("Failed to list");
+    assert_eq!(notes.len(), 2);
+
+    cleanup_temp_db(&db_path);
+}
+
+#[test]
+fn cleanup_orphan_tags_removes_unused() {
+    let db_path = temp_db_path("orphan-cleanup");
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    // Create a note deep in hierarchy: domain/ai/ml/deep-learning
+    // This creates intermediate nodes "ai" and "ml" that aren't notes themselves
+    let note1 = note::Note {
+        title: "deep-learning".to_string(),
+        path: PathBuf::from("/tmp/dl.md"),
+        tags: vec!["domain/ai/ml/deep-learning".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai/ml/deep-learning").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&note1).expect("Failed to insert");
+
+    // Verify hierarchy exists
+    let paths = store.all_tree_paths().expect("Failed to get paths");
+    assert!(paths.iter().any(|p| p.contains("ai")), "ai should exist: {:?}", paths);
+    assert!(paths.iter().any(|p| p.contains("ml")), "ml should exist: {:?}", paths);
+
+    // Remove the note - this removes the note's triples but leaves orphan hierarchy
+    store.remove_note("/tmp/dl.md").expect("Failed to remove");
+
+    // Run garbage collection - should clean up ai, ml hierarchy nodes
+    let _removed = store.cleanup_orphan_tags().expect("Failed to cleanup");
+
+    // After cleanup, orphan intermediate nodes should be gone
+    let paths_after = store.all_tree_paths().expect("Failed to get paths");
+    assert!(
+        paths_after.is_empty() || !paths_after.iter().any(|p| p.contains("ml")),
+        "orphan hierarchy should be cleaned up: {:?}",
+        paths_after
+    );
+
+    cleanup_temp_db(&db_path);
+}
+
+#[test]
+fn cleanup_preserves_shared_ancestors() {
+    let db_path = temp_db_path("shared-ancestors");
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    // Two notes share ancestor "ai": domain/ai/x and domain/ai/y
+    let note1 = note::Note {
+        title: "topic-x".to_string(),
+        path: PathBuf::from("/tmp/x.md"),
+        tags: vec!["domain/ai/topic-x".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai/topic-x").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&note1).expect("Failed to insert");
+
+    let note2 = note::Note {
+        title: "topic-y".to_string(),
+        path: PathBuf::from("/tmp/y.md"),
+        tags: vec!["domain/ai/topic-y".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai/topic-y").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&note2).expect("Failed to insert");
+
+    // Remove note1
+    store.remove_note("/tmp/x.md").expect("Failed to remove");
+    store.cleanup_orphan_tags().expect("Failed to cleanup");
+
+    // domain/ai should still exist (used by topic-y)
+    let paths = store.all_tree_paths().expect("Failed to get paths");
+    assert!(
+        paths.iter().any(|p| p == "domain/ai" || p.starts_with("domain/ai/")),
+        "domain/ai should be preserved: {:?}",
+        paths
+    );
+
+    cleanup_temp_db(&db_path);
+}
+
+// ============================================================================
+// Export tests
+// ============================================================================
+
+#[test]
+fn export_dot_includes_notes_and_edges() {
+    let db_path = temp_db_path("export-dot");
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    // Create notes with links and tree edges
+    let note1 = note::Note {
+        title: "AI".to_string(),
+        path: PathBuf::from("/tmp/ai.md"),
+        tags: vec!["domain/ai".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai").unwrap()],
+        fields: Default::default(),
+        links: vec![note::Link {
+            target: "ML".to_string(),
+            line: 1,
+            start_col: 0,
+            end_col: 4,
+        }],
+    };
+    store.upsert_note(&note1).expect("Failed to insert");
+
+    let note2 = note::Note {
+        title: "ML".to_string(),
+        path: PathBuf::from("/tmp/ml.md"),
+        tags: vec!["domain/ai/ml".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai/ml").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&note2).expect("Failed to insert");
+
+    let dot = store.export_dot().expect("Failed to export DOT");
+
+    // Check DOT structure
+    assert!(dot.starts_with("digraph vault {"), "Should be valid DOT");
+    assert!(dot.contains("n_AI"), "Should have AI node");
+    assert!(dot.contains("n_ML"), "Should have ML node");
+    assert!(dot.contains("->"), "Should have edges");
+    assert!(dot.contains("domain"), "Should have tree edge labels");
+
+    cleanup_temp_db(&db_path);
+}
+
+#[test]
+fn export_graphml_valid_xml() {
+    let db_path = temp_db_path("export-graphml");
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    let note = note::Note {
+        title: "Test & Note".to_string(), // Test XML escaping
+        path: PathBuf::from("/tmp/test.md"),
+        tags: vec!["type/test".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("type/test").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&note).expect("Failed to insert");
+
+    let xml = store.export_graphml().expect("Failed to export GraphML");
+
+    // Check GraphML structure
+    assert!(xml.contains("<?xml"), "Should have XML declaration");
+    assert!(xml.contains("<graphml"), "Should have graphml root");
+    assert!(xml.contains("<node"), "Should have nodes");
+    assert!(xml.contains("Test &amp; Note"), "Should escape XML entities");
+    assert!(xml.contains("</graphml>"), "Should close graphml tag");
+
+    cleanup_temp_db(&db_path);
+}

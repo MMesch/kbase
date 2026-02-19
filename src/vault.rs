@@ -112,6 +112,11 @@ pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
         }
     }
 
+    // Clean up orphaned tree hierarchy edges
+    if updated > 0 {
+        store.cleanup_orphan_tags()?;
+    }
+
     Ok((store, updated))
 }
 

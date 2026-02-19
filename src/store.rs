@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -29,15 +30,16 @@ impl Store {
 
     /// Get the stored mtime for a note (as unix timestamp)
     pub fn get_note_mtime(&self, path: &str) -> Result<Option<u64>> {
-        let note_iri = self.note_iri(path);
+        // Query by path property since notes are identified by title
         let query = format!(
             r#"
             PREFIX kb: <{KBASE_NS}>
             SELECT ?mtime WHERE {{
-                <{}> kb:mtime ?mtime .
+                ?note kb:path "{}" .
+                ?note kb:mtime ?mtime .
             }}
             "#,
-            note_iri.as_str()
+            path.replace('\\', "\\\\").replace('"', "\\\"")
         );
 
         if let QueryResults::Solutions(mut solutions) = self.inner.query(&query)? {
@@ -82,6 +84,104 @@ impl Store {
         self.remove_note_triples(path)
     }
 
+    /// Remove orphaned tree hierarchy edges that no notes reference
+    pub fn cleanup_orphan_tags(&self) -> Result<usize> {
+        // Step 1: Get all tree paths currently used by notes
+        let used_paths: HashSet<String> = {
+            let query = format!(
+                r#"
+                PREFIX kb: <{KBASE_NS}>
+
+                SELECT DISTINCT ?tree ?parent WHERE {{
+                    ?note kb:type kb:Note .
+                    ?note ?pred ?parent .
+                    FILTER(STRSTARTS(STR(?pred), "{KBASE_NS}child/"))
+                    BIND(REPLACE(STR(?pred), "{KBASE_NS}child/", "") AS ?tree)
+                }}
+                "#
+            );
+
+            let mut paths = HashSet::new();
+            if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+                for solution in solutions.flatten() {
+                    if let (Some(Term::Literal(tree)), Some(Term::NamedNode(parent))) =
+                        (solution.get("tree"), solution.get("parent"))
+                    {
+                        let tree_name = tree.value();
+                        let parent_title = parent
+                            .as_str()
+                            .strip_prefix(&format!("{KBASE_NS}note/"))
+                            .and_then(|s| urlencoding::decode(s).ok())
+                            .map(|s| s.to_string())
+                            .unwrap_or_default();
+                        if !parent_title.is_empty() {
+                            paths.insert(format!("{}/{}", tree_name, parent_title));
+                        }
+                    }
+                }
+            }
+            paths
+        };
+
+        // Step 2: Find all tree hierarchy edges (non-note subjects)
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+
+            SELECT ?child ?pred ?parent WHERE {{
+                ?child ?pred ?parent .
+                FILTER(STRSTARTS(STR(?pred), "{KBASE_NS}child/"))
+                FILTER(!EXISTS {{ ?child kb:type kb:Note }})
+            }}
+            "#
+        );
+
+        let mut to_remove = Vec::new();
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions.flatten() {
+                if let (
+                    Some(Term::NamedNode(child)),
+                    Some(Term::NamedNode(pred)),
+                    Some(Term::NamedNode(parent)),
+                ) = (solution.get("child"), solution.get("pred"), solution.get("parent"))
+                {
+                    let tree = pred
+                        .as_str()
+                        .strip_prefix(&format!("{KBASE_NS}child/"))
+                        .unwrap_or("");
+                    let child_title = child
+                        .as_str()
+                        .strip_prefix(&format!("{KBASE_NS}note/"))
+                        .and_then(|s| urlencoding::decode(s).ok())
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+
+                    let path = format!("{}/{}", tree, child_title);
+
+                    // Check if this path (or any descendant) is used by notes
+                    let is_used = used_paths.iter().any(|p| p.starts_with(&path));
+
+                    if !is_used {
+                        to_remove.push((child.clone(), pred.clone(), parent.clone()));
+                    }
+                }
+            }
+        }
+
+        // Step 3: Remove orphaned edges
+        let count = to_remove.len();
+        for (child, pred, parent) in to_remove {
+            self.inner.remove(&Quad::new(
+                child,
+                pred,
+                parent,
+                GraphNameRef::DefaultGraph,
+            ))?;
+        }
+
+        Ok(count)
+    }
+
     /// Insert or update a note in the graph
     pub fn upsert_note(&self, note: &Note) -> Result<()> {
         self.upsert_note_with_mtime(note, None)
@@ -90,9 +190,9 @@ impl Store {
     /// Insert or update a note with explicit mtime tracking
     pub fn upsert_note_with_mtime(&self, note: &Note, mtime: Option<SystemTime>) -> Result<()> {
         let path_str = note.path.to_string_lossy();
-        let note_iri = self.note_iri(&path_str);
+        let note_iri = self.note_iri(&note.title);
 
-        // Remove existing triples for this note
+        // Remove existing triples for this note (by path lookup)
         self.remove_note_triples(&path_str)?;
 
         // Add note type
@@ -149,7 +249,7 @@ impl Store {
         for edge in &note.tree_edges {
             // The parent is the last element in the path
             // Create edge from this note to its parent
-            let parent_iri = self.note_iri_by_title(&edge.parent);
+            let parent_iri = self.note_iri(&edge.parent);
             let predicate = self.tree_predicate(&edge.tree);
             self.inner.insert(&Quad::new(
                 note_iri.clone(),
@@ -545,7 +645,11 @@ impl Store {
 
     /// Remove all triples for a note
     fn remove_note_triples(&self, path: &str) -> Result<()> {
-        let note_iri = self.note_iri(path);
+        // Find note IRI by path property
+        let note_iri = match self.find_note_iri_by_path(path)? {
+            Some(iri) => iri,
+            None => return Ok(()), // Note doesn't exist, nothing to remove
+        };
 
         // Find and remove all triples where note is subject
         let query = format!(
@@ -584,10 +688,33 @@ impl Store {
         Ok(())
     }
 
-    fn note_iri(&self, path: &str) -> NamedNode {
-        // Encode path for valid IRI (replace spaces, special chars)
-        let encoded = path.replace(' ', "%20").replace('#', "%23");
+    /// Create IRI for a note by title (unified scheme for notes and tree nodes)
+    fn note_iri(&self, title: &str) -> NamedNode {
+        let encoded = urlencoding::encode(title);
         NamedNode::new_unchecked(format!("{}note/{}", KBASE_NS, encoded))
+    }
+
+    /// Find note IRI by path property (for lookups when we only have path)
+    fn find_note_iri_by_path(&self, path: &str) -> Result<Option<NamedNode>> {
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?note WHERE {{
+                ?note kb:path "{}" .
+            }}
+            "#,
+            path.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+
+        if let QueryResults::Solutions(mut solutions) = self.inner.query(&query)? {
+            if let Some(solution) = solutions.next() {
+                let solution = solution?;
+                if let Some(Term::NamedNode(node)) = solution.get("note") {
+                    return Ok(Some(node.clone()));
+                }
+            }
+        }
+        Ok(None)
     }
 
     fn tag_iri(&self, tag: &str) -> NamedNode {
@@ -596,12 +723,6 @@ impl Store {
 
     fn iri(&self, local: &str) -> NamedNode {
         NamedNode::new_unchecked(format!("{}{}", KBASE_NS, local))
-    }
-
-    /// Create IRI for a note by title (for tree edges)
-    fn note_iri_by_title(&self, title: &str) -> NamedNode {
-        let encoded = title.replace(' ', "%20").replace('#', "%23");
-        NamedNode::new_unchecked(format!("{}note/title/{}", KBASE_NS, encoded))
     }
 
     /// Create predicate for tree edge: kb:child/{tree_name}
@@ -616,8 +737,8 @@ impl Store {
         // Create edges between consecutive ancestors
         // e.g., for [domain, ai, llms]: domain<-ai, ai<-llms
         for i in 1..ancestors.len() {
-            let child_iri = self.note_iri_by_title(&ancestors[i]);
-            let parent_iri = self.note_iri_by_title(&ancestors[i - 1]);
+            let child_iri = self.note_iri(&ancestors[i]);
+            let parent_iri = self.note_iri(&ancestors[i - 1]);
 
             self.inner.insert(&Quad::new(
                 child_iri,
@@ -632,7 +753,7 @@ impl Store {
 
     /// Get children of a note in a specific tree
     pub fn tree_children(&self, tree: &str, parent_title: &str) -> Result<Vec<String>> {
-        let parent_iri = self.note_iri_by_title(parent_title);
+        let parent_iri = self.note_iri(parent_title);
         let predicate = format!("{}child/{}", KBASE_NS, tree);
 
         let query = format!(
@@ -647,15 +768,16 @@ impl Store {
         );
 
         let mut children = Vec::new();
-        let prefix = format!("{}note/title/", KBASE_NS);
+        let prefix = format!("{}note/", KBASE_NS);
 
         if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
             for solution in solutions {
                 let solution = solution?;
                 if let Some(Term::NamedNode(child)) = solution.get("child") {
-                    if let Some(title) = child.as_str().strip_prefix(&prefix) {
-                        let decoded = title.replace("%20", " ").replace("%23", "#");
-                        children.push(decoded);
+                    if let Some(encoded) = child.as_str().strip_prefix(&prefix) {
+                        if let Ok(decoded) = urlencoding::decode(encoded) {
+                            children.push(decoded.to_string());
+                        }
                     }
                 }
             }
@@ -666,7 +788,7 @@ impl Store {
 
     /// Get all descendants of a note in a specific tree (recursive)
     pub fn tree_descendants(&self, tree: &str, parent_title: &str) -> Result<Vec<String>> {
-        let parent_iri = self.note_iri_by_title(parent_title);
+        let parent_iri = self.note_iri(parent_title);
         let predicate = format!("{}child/{}", KBASE_NS, tree);
 
         let query = format!(
@@ -681,15 +803,16 @@ impl Store {
         );
 
         let mut descendants = Vec::new();
-        let prefix = format!("{}note/title/", KBASE_NS);
+        let prefix = format!("{}note/", KBASE_NS);
 
         if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
             for solution in solutions {
                 let solution = solution?;
                 if let Some(Term::NamedNode(desc)) = solution.get("descendant") {
-                    if let Some(title) = desc.as_str().strip_prefix(&prefix) {
-                        let decoded = title.replace("%20", " ").replace("%23", "#");
-                        descendants.push(decoded);
+                    if let Some(encoded) = desc.as_str().strip_prefix(&prefix) {
+                        if let Ok(decoded) = urlencoding::decode(encoded) {
+                            descendants.push(decoded.to_string());
+                        }
                     }
                 }
             }
@@ -714,15 +837,16 @@ impl Store {
         );
 
         let mut roots = Vec::new();
-        let prefix = format!("{}note/title/", KBASE_NS);
+        let prefix = format!("{}note/", KBASE_NS);
 
         if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
             for solution in solutions {
                 let solution = solution?;
                 if let Some(Term::NamedNode(root)) = solution.get("root") {
-                    if let Some(title) = root.as_str().strip_prefix(&prefix) {
-                        let decoded = title.replace("%20", " ").replace("%23", "#");
-                        roots.push(decoded);
+                    if let Some(encoded) = root.as_str().strip_prefix(&prefix) {
+                        if let Ok(decoded) = urlencoding::decode(encoded) {
+                            roots.push(decoded.to_string());
+                        }
                     }
                 }
             }
@@ -746,7 +870,7 @@ impl Store {
         );
 
         let mut paths = std::collections::HashSet::new();
-        let note_prefix = format!("{}note/title/", KBASE_NS);
+        let note_prefix = format!("{}note/", KBASE_NS);
         let pred_prefix = format!("{}child/", KBASE_NS);
 
         if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
@@ -761,13 +885,17 @@ impl Store {
                     solution.get("child"),
                     solution.get("parent"),
                 ) {
-                    if let (Some(tree), Some(child_title), Some(parent_title)) = (
+                    if let (Some(tree), Some(child_enc), Some(parent_enc)) = (
                         pred.as_str().strip_prefix(&pred_prefix),
                         child.as_str().strip_prefix(&note_prefix),
                         parent.as_str().strip_prefix(&note_prefix),
                     ) {
-                        let child_decoded = child_title.replace("%20", " ");
-                        let parent_decoded = parent_title.replace("%20", " ");
+                        let child_decoded = urlencoding::decode(child_enc)
+                            .map(|s| s.to_string())
+                            .unwrap_or_default();
+                        let parent_decoded = urlencoding::decode(parent_enc)
+                            .map(|s| s.to_string())
+                            .unwrap_or_default();
 
                         // Add the tree name itself
                         paths.insert(tree.to_string());
@@ -837,5 +965,274 @@ impl Store {
         }
 
         Ok(violations)
+    }
+
+    /// Export the graph as DOT format (Graphviz)
+    pub fn export_dot(&self) -> Result<String> {
+        let mut dot = String::from("digraph vault {\n");
+        dot.push_str("  rankdir=LR;\n");
+        dot.push_str("  node [shape=box];\n\n");
+
+        // Get all notes
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?title ?path WHERE {{
+                ?note kb:type kb:Note .
+                ?note kb:title ?title .
+                ?note kb:path ?path .
+            }}
+            "#
+        );
+
+        let mut notes: Vec<(String, String)> = Vec::new();
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions.flatten() {
+                if let (Some(Term::Literal(title)), Some(Term::Literal(path))) =
+                    (solution.get("title"), solution.get("path"))
+                {
+                    notes.push((title.value().to_string(), path.value().to_string()));
+                }
+            }
+        }
+
+        // Add note nodes
+        dot.push_str("  // Notes\n");
+        for (title, _path) in &notes {
+            let escaped = title.replace('"', "\\\"");
+            let id = Self::dot_id(title);
+            dot.push_str(&format!("  {} [label=\"{}\"];\n", id, escaped));
+        }
+
+        // Get links between notes
+        dot.push_str("\n  // Links\n");
+        let link_query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?from_title ?target WHERE {{
+                ?note kb:type kb:Note .
+                ?note kb:title ?from_title .
+                ?note kb:linksTo ?target .
+            }}
+            "#
+        );
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&link_query)? {
+            for solution in solutions.flatten() {
+                if let (Some(Term::Literal(from)), Some(Term::Literal(target))) =
+                    (solution.get("from_title"), solution.get("target"))
+                {
+                    let from_id = Self::dot_id(from.value());
+                    let to_id = Self::dot_id(target.value());
+                    dot.push_str(&format!("  {} -> {} [style=dashed, color=gray];\n", from_id, to_id));
+                }
+            }
+        }
+
+        // Get tree edges
+        dot.push_str("\n  // Tree edges\n");
+        let tree_query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?child ?pred ?parent WHERE {{
+                ?child ?pred ?parent .
+                FILTER(STRSTARTS(STR(?pred), "{KBASE_NS}child/"))
+            }}
+            "#
+        );
+
+        let note_prefix = format!("{}note/", KBASE_NS);
+        let pred_prefix = format!("{}child/", KBASE_NS);
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&tree_query)? {
+            for solution in solutions.flatten() {
+                if let (
+                    Some(Term::NamedNode(child)),
+                    Some(Term::NamedNode(pred)),
+                    Some(Term::NamedNode(parent)),
+                ) = (solution.get("child"), solution.get("pred"), solution.get("parent"))
+                {
+                    if let (Some(child_enc), Some(parent_enc), Some(tree)) = (
+                        child.as_str().strip_prefix(&note_prefix),
+                        parent.as_str().strip_prefix(&note_prefix),
+                        pred.as_str().strip_prefix(&pred_prefix),
+                    ) {
+                        let child_title = urlencoding::decode(child_enc).unwrap_or_default();
+                        let parent_title = urlencoding::decode(parent_enc).unwrap_or_default();
+                        let child_id = Self::dot_id(&child_title);
+                        let parent_id = Self::dot_id(&parent_title);
+                        dot.push_str(&format!(
+                            "  {} -> {} [label=\"{}\", color=blue];\n",
+                            child_id, parent_id, tree
+                        ));
+                    }
+                }
+            }
+        }
+
+        dot.push_str("}\n");
+        Ok(dot)
+    }
+
+    /// Export the graph as GraphML format
+    pub fn export_graphml(&self) -> Result<String> {
+        let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="title" for="node" attr.name="title" attr.type="string"/>
+  <key id="path" for="node" attr.name="path" attr.type="string"/>
+  <key id="type" for="edge" attr.name="type" attr.type="string"/>
+  <key id="tree" for="edge" attr.name="tree" attr.type="string"/>
+  <graph id="vault" edgedefault="directed">
+"#);
+
+        // Get all notes
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?title ?path WHERE {{
+                ?note kb:type kb:Note .
+                ?note kb:title ?title .
+                ?note kb:path ?path .
+            }}
+            "#
+        );
+
+        let mut node_id = 0;
+        let mut title_to_id: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions.flatten() {
+                if let (Some(Term::Literal(title)), Some(Term::Literal(path))) =
+                    (solution.get("title"), solution.get("path"))
+                {
+                    let t = title.value().to_string();
+                    let p = path.value().to_string();
+                    title_to_id.insert(t.clone(), node_id);
+                    xml.push_str(&format!(
+                        "    <node id=\"n{}\">\n      <data key=\"title\">{}</data>\n      <data key=\"path\">{}</data>\n    </node>\n",
+                        node_id,
+                        Self::xml_escape(&t),
+                        Self::xml_escape(&p)
+                    ));
+                    node_id += 1;
+                }
+            }
+        }
+
+        // Get links
+        let mut edge_id = 0;
+        let link_query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?from_title ?target WHERE {{
+                ?note kb:type kb:Note .
+                ?note kb:title ?from_title .
+                ?note kb:linksTo ?target .
+            }}
+            "#
+        );
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&link_query)? {
+            for solution in solutions.flatten() {
+                if let (Some(Term::Literal(from)), Some(Term::Literal(target))) =
+                    (solution.get("from_title"), solution.get("target"))
+                {
+                    let from_title = from.value();
+                    let to_title = target.value();
+                    if let (Some(&from_id), Some(&to_id)) =
+                        (title_to_id.get(from_title), title_to_id.get(to_title))
+                    {
+                        xml.push_str(&format!(
+                            "    <edge id=\"e{}\" source=\"n{}\" target=\"n{}\">\n      <data key=\"type\">link</data>\n    </edge>\n",
+                            edge_id, from_id, to_id
+                        ));
+                        edge_id += 1;
+                    }
+                }
+            }
+        }
+
+        // Get tree edges
+        let tree_query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?child ?pred ?parent WHERE {{
+                ?child ?pred ?parent .
+                FILTER(STRSTARTS(STR(?pred), "{KBASE_NS}child/"))
+            }}
+            "#
+        );
+
+        let note_prefix = format!("{}note/", KBASE_NS);
+        let pred_prefix = format!("{}child/", KBASE_NS);
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&tree_query)? {
+            for solution in solutions.flatten() {
+                if let (
+                    Some(Term::NamedNode(child)),
+                    Some(Term::NamedNode(pred)),
+                    Some(Term::NamedNode(parent)),
+                ) = (solution.get("child"), solution.get("pred"), solution.get("parent"))
+                {
+                    if let (Some(child_enc), Some(parent_enc), Some(tree)) = (
+                        child.as_str().strip_prefix(&note_prefix),
+                        parent.as_str().strip_prefix(&note_prefix),
+                        pred.as_str().strip_prefix(&pred_prefix),
+                    ) {
+                        let child_title = urlencoding::decode(child_enc).unwrap_or_default().to_string();
+                        let parent_title = urlencoding::decode(parent_enc).unwrap_or_default().to_string();
+
+                        // Ensure nodes exist for tree nodes that aren't notes
+                        let child_id = *title_to_id.entry(child_title.clone()).or_insert_with(|| {
+                            let id = node_id;
+                            xml.push_str(&format!(
+                                "    <node id=\"n{}\">\n      <data key=\"title\">{}</data>\n    </node>\n",
+                                id,
+                                Self::xml_escape(&child_title)
+                            ));
+                            node_id += 1;
+                            id
+                        });
+                        let parent_id = *title_to_id.entry(parent_title.clone()).or_insert_with(|| {
+                            let id = node_id;
+                            xml.push_str(&format!(
+                                "    <node id=\"n{}\">\n      <data key=\"title\">{}</data>\n    </node>\n",
+                                id,
+                                Self::xml_escape(&parent_title)
+                            ));
+                            node_id += 1;
+                            id
+                        });
+
+                        xml.push_str(&format!(
+                            "    <edge id=\"e{}\" source=\"n{}\" target=\"n{}\">\n      <data key=\"type\">tree</data>\n      <data key=\"tree\">{}</data>\n    </edge>\n",
+                            edge_id, child_id, parent_id, Self::xml_escape(tree)
+                        ));
+                        edge_id += 1;
+                    }
+                }
+            }
+        }
+
+        xml.push_str("  </graph>\n</graphml>\n");
+        Ok(xml)
+    }
+
+    /// Create a valid DOT node ID from a title
+    fn dot_id(title: &str) -> String {
+        let clean: String = title
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        format!("n_{}", clean)
+    }
+
+    /// Escape special XML characters
+    fn xml_escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
     }
 }
