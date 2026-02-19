@@ -21,7 +21,14 @@ function M.setup(opts)
     local prefix = opts.telescope_prefix or "<leader>k"
     vim.keymap.set("n", prefix .. "s", M.telescope.search, { desc = "kbase: semantic search" })
     vim.keymap.set("n", prefix .. "n", M.telescope.notes, { desc = "kbase: all notes" })
-    vim.keymap.set("n", prefix .. "b", vim.lsp.buf.references, { desc = "kbase: backlinks" })
+    -- Backlinks: support both native LSP and coc.nvim
+    vim.keymap.set("n", prefix .. "b", function()
+      if vim.fn.exists('*CocAction') == 1 then
+        vim.fn.CocAction('jumpReferences')
+      else
+        vim.lsp.buf.references()
+      end
+    end, { desc = "kbase: backlinks" })
   end
 
   -- Neo-tree integration

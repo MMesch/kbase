@@ -732,6 +732,7 @@ impl Store {
     }
 
     /// Get all tree paths for autocompletion
+    /// Returns paths like "type", "type/concept", "domain/ai"
     pub fn all_tree_paths(&self) -> Result<Vec<String>> {
         let query = format!(
             r#"
@@ -767,9 +768,23 @@ impl Store {
                     ) {
                         let child_decoded = child_title.replace("%20", " ");
                         let parent_decoded = parent_title.replace("%20", " ");
-                        // Add both the parent path and child path
-                        paths.insert(format!("{}/{}", tree, parent_decoded));
-                        paths.insert(format!("{}/{}/{}", tree, parent_decoded, child_decoded));
+
+                        // Add the tree name itself
+                        paths.insert(tree.to_string());
+
+                        // Add parent if different from tree name (avoid type/type)
+                        if parent_decoded != tree {
+                            paths.insert(format!("{}/{}", tree, parent_decoded));
+                        }
+
+                        // Add child path
+                        if parent_decoded == tree {
+                            // Parent is tree root, so just tree/child
+                            paths.insert(format!("{}/{}", tree, child_decoded));
+                        } else {
+                            // Full path: tree/parent/child
+                            paths.insert(format!("{}/{}/{}", tree, parent_decoded, child_decoded));
+                        }
                     }
                 }
             }
