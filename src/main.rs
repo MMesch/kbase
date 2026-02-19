@@ -68,10 +68,16 @@ enum Commands {
     Search {
         /// Search query
         query: String,
-        /// Number of results
+        /// Maximum number of results
         #[arg(short, long, default_value = "5")]
         limit: usize,
-        /// Output format (text, json)
+        /// Minimum similarity score threshold (0.0-1.0)
+        #[arg(short, long, default_value = "0.0")]
+        threshold: f32,
+        /// Preview length in characters (0 for full chunk)
+        #[arg(short, long, default_value = "1000")]
+        preview: usize,
+        /// Output format (text, json, quickfix)
         #[arg(long, default_value = "text")]
         format: String,
     },
@@ -260,7 +266,7 @@ fn main() -> Result<()> {
                 println!("{:.3}  {}{}", score, chunk.note_path, header);
             }
         }
-        Commands::Search { query, limit, format } => {
+        Commands::Search { query, limit, threshold, preview, format } => {
             let vault_path = get_vault()?;
             let config = Config::load(&vault_path)?;
             let notes = vault::load_notes(&vault_path)?;
@@ -304,8 +310,20 @@ fn main() -> Result<()> {
             // Embed the query (also cached)
             let query_embedding = cache.get_or_compute(&query, &mut *backend)?;
 
-            // Find similar chunks
-            let results = store.find_similar(&query_embedding, limit);
+            // Find similar chunks and filter by threshold
+            let results: Vec<_> = store.find_similar(&query_embedding, limit)
+                .into_iter()
+                .filter(|(_, score)| *score >= threshold)
+                .collect();
+
+            // Helper to truncate text for preview
+            let truncate = |text: &str| -> String {
+                if preview == 0 {
+                    text.to_string()
+                } else {
+                    text.chars().take(preview).collect()
+                }
+            };
 
             match format.as_str() {
                 "json" => {
@@ -316,7 +334,8 @@ fn main() -> Result<()> {
                                 "path": chunk.note_path,
                                 "score": score,
                                 "section": chunk.header_path.join(" > "),
-                                "preview": chunk.text.chars().take(200).collect::<String>()
+                                "line": chunk.line,
+                                "preview": truncate(&chunk.text)
                             })
                         })
                         .collect();
@@ -330,8 +349,8 @@ fn main() -> Result<()> {
                         } else {
                             format!(" > {}", chunk.header_path.join(" > "))
                         };
-                        let preview: String = chunk.text.chars().take(80).collect::<String>().replace('\n', " ");
-                        println!("{}:1:1:[{:.2}]{} {}", chunk.note_path, score, section, preview);
+                        let text = truncate(&chunk.text).replace('\n', " ");
+                        println!("{}:{}:1:[{:.2}]{} {}", chunk.note_path, chunk.line, score, section, text);
                     }
                 }
                 _ => {
@@ -346,8 +365,8 @@ fn main() -> Result<()> {
                         };
                         println!("{:.3}  {}{}", score, chunk.note_path, header);
                         // Show preview of text
-                        let preview: String = chunk.text.chars().take(100).collect();
-                        println!("       {}", preview.replace('\n', " "));
+                        let text = truncate(&chunk.text).replace('\n', " ");
+                        println!("       {}", text);
                         println!();
                     }
                 }
