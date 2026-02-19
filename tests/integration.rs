@@ -226,6 +226,7 @@ fn persistent_store_opens_and_persists() {
             title: "Test Note".to_string(),
             path: PathBuf::from("/tmp/test.md"),
             tags: vec!["test".to_string()],
+            tree_edges: vec![],
             fields: Default::default(),
             links: vec![],
         };
@@ -255,6 +256,7 @@ fn persistent_store_tracks_mtime() {
         title: "Mtime Test".to_string(),
         path: PathBuf::from("/tmp/mtime-test.md"),
         tags: vec![],
+        tree_edges: vec![],
         fields: Default::default(),
         links: vec![],
     };
@@ -293,6 +295,7 @@ fn persistent_store_lists_all_paths() {
             title: format!("Note {}", i),
             path: PathBuf::from(format!("/tmp/note{}.md", i)),
             tags: vec![],
+            tree_edges: vec![],
             fields: Default::default(),
             links: vec![],
         };
@@ -317,6 +320,7 @@ fn persistent_store_removes_notes() {
         title: "To Delete".to_string(),
         path: PathBuf::from("/tmp/delete-me.md"),
         tags: vec!["deletable".to_string()],
+        tree_edges: vec![],
         fields: Default::default(),
         links: vec![],
     };

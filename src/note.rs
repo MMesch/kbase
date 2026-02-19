@@ -21,12 +21,52 @@ pub struct Link {
     pub end_col: u32,
 }
 
+/// A tree relationship parsed from tags or trees field
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEdge {
+    /// Tree name (first segment of path)
+    pub tree: String,
+    /// Parent note title (last segment of path)
+    pub parent: String,
+    /// Full path (e.g., "domain/ai/llms")
+    pub path: String,
+    /// All ancestors in order (e.g., ["domain", "ai", "llms"])
+    pub ancestors: Vec<String>,
+}
+
+impl TreeEdge {
+    /// Parse a tag path like "domain/ai/llms" into a TreeEdge
+    pub fn parse(path: &str) -> Option<Self> {
+        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        let tree = parts[0].to_string();
+        let ancestors: Vec<String> = parts.iter().map(|s| s.to_string()).collect();
+        let parent = if parts.len() > 1 {
+            parts[parts.len() - 1].to_string()
+        } else {
+            tree.clone() // Root node, parent is the tree itself
+        };
+
+        Some(Self {
+            tree,
+            parent,
+            path: path.to_string(),
+            ancestors,
+        })
+    }
+}
+
 /// Parsed note with frontmatter
 #[derive(Debug, Clone)]
 pub struct Note {
     pub path: PathBuf,
     pub title: String,
     pub tags: Vec<String>,
+    /// Tree relationships parsed from tags/trees fields
+    pub tree_edges: Vec<TreeEdge>,
     pub fields: HashMap<String, serde_yaml::Value>,
     pub links: Vec<Link>,
 }
@@ -38,6 +78,9 @@ struct Frontmatter {
     title: Option<String>,
     #[serde(default)]
     tags: Vec<String>,
+    /// Trees field: { tree_name: "tree/path" }
+    #[serde(default)]
+    trees: HashMap<String, String>,
     #[serde(flatten)]
     other: HashMap<String, serde_yaml::Value>,
 }
@@ -62,13 +105,43 @@ pub fn parse(path: &Path, link_syntax: LinkSyntax) -> Result<Note> {
 
     let links = extract_links(&body, link_syntax, body_start_line);
 
+    // Parse tree edges from both tags and trees field
+    let tree_edges = extract_tree_edges(&fm.tags, &fm.trees);
+
     Ok(Note {
         path: path.to_path_buf(),
         title,
         tags: fm.tags,
+        tree_edges,
         fields: fm.other,
         links,
     })
+}
+
+/// Extract tree edges from tags array and trees field
+fn extract_tree_edges(
+    tags: &[String],
+    trees: &HashMap<String, String>,
+) -> Vec<TreeEdge> {
+    let mut edges = Vec::new();
+
+    // Parse from tags: [domain/ai, type/reference]
+    for tag in tags {
+        if tag.contains('/') {
+            if let Some(edge) = TreeEdge::parse(tag) {
+                edges.push(edge);
+            }
+        }
+    }
+
+    // Parse from trees: { domain: domain/ai }
+    for (_tree_name, path) in trees {
+        if let Some(edge) = TreeEdge::parse(path) {
+            edges.push(edge);
+        }
+    }
+
+    edges
 }
 
 /// Create a new note with the given title
@@ -277,5 +350,55 @@ mod tests {
     fn split_frontmatter_missing() {
         let content = "No frontmatter here";
         assert!(split_frontmatter(content).is_err());
+    }
+
+    #[test]
+    fn tree_edge_parse_simple() {
+        let edge = TreeEdge::parse("domain/ai").unwrap();
+        assert_eq!(edge.tree, "domain");
+        assert_eq!(edge.parent, "ai");
+        assert_eq!(edge.ancestors, vec!["domain", "ai"]);
+    }
+
+    #[test]
+    fn tree_edge_parse_deep() {
+        let edge = TreeEdge::parse("domain/ai/llms/transformers").unwrap();
+        assert_eq!(edge.tree, "domain");
+        assert_eq!(edge.parent, "transformers");
+        assert_eq!(edge.ancestors, vec!["domain", "ai", "llms", "transformers"]);
+    }
+
+    #[test]
+    fn tree_edge_parse_root() {
+        let edge = TreeEdge::parse("domain").unwrap();
+        assert_eq!(edge.tree, "domain");
+        assert_eq!(edge.parent, "domain");
+        assert_eq!(edge.ancestors, vec!["domain"]);
+    }
+
+    #[test]
+    fn tree_edge_parse_empty() {
+        assert!(TreeEdge::parse("").is_none());
+    }
+
+    #[test]
+    fn extract_tree_edges_from_tags() {
+        let tags = vec!["domain/ai".to_string(), "flat-tag".to_string(), "type/reference".to_string()];
+        let trees = HashMap::new();
+        let edges = extract_tree_edges(&tags, &trees);
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].tree, "domain");
+        assert_eq!(edges[1].tree, "type");
+    }
+
+    #[test]
+    fn extract_tree_edges_from_trees_field() {
+        let tags = vec![];
+        let mut trees = HashMap::new();
+        trees.insert("domain".to_string(), "domain/ai/llms".to_string());
+        let edges = extract_tree_edges(&tags, &trees);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].tree, "domain");
+        assert_eq!(edges[0].parent, "llms");
     }
 }

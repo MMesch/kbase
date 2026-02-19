@@ -353,6 +353,187 @@ impl KbaseLanguageServer {
         let target = link_content.split('|').next()?;
         Some(target.to_string())
     }
+
+    /// Extract tag path at cursor position in frontmatter
+    fn get_tag_at_position(&self, content: &str, position: Position) -> Option<String> {
+        let lines: Vec<&str> = content.lines().collect();
+        let line_idx = position.line as usize;
+        let col = position.character as usize;
+
+        // Check if we're in frontmatter
+        let mut in_frontmatter = false;
+        let mut frontmatter_end = 0;
+        for (i, line) in lines.iter().enumerate() {
+            if i == 0 && line.trim() == "---" {
+                in_frontmatter = true;
+                continue;
+            }
+            if in_frontmatter && line.trim() == "---" {
+                frontmatter_end = i;
+                break;
+            }
+        }
+
+        if line_idx == 0 || line_idx >= frontmatter_end {
+            return None;
+        }
+
+        let line = lines.get(line_idx)?;
+        let trimmed = line.trim();
+
+        // Pattern 1: "  - domain/ai" (list item)
+        if trimmed.starts_with("- ") {
+            let value = &trimmed[2..];
+            if value.contains('/') && col >= line.find("- ").unwrap_or(0) + 2 {
+                return Some(value.trim().to_string());
+            }
+        }
+
+        // Pattern 2: "tags: [domain/ai, ...]" (inline array)
+        if trimmed.starts_with("tags:") && trimmed.contains('[') {
+            if let Some(bracket_start) = line.find('[') {
+                if let Some(bracket_end) = line.find(']') {
+                    if col > bracket_start && col < bracket_end {
+                        let array_content = &line[bracket_start + 1..bracket_end];
+                        let tags: Vec<&str> = array_content.split(',').map(|s| s.trim()).collect();
+
+                        let mut current_pos = bracket_start + 1;
+                        for tag in tags {
+                            let tag_start = current_pos + line[current_pos..].find(tag).unwrap_or(0);
+                            let tag_end = tag_start + tag.len();
+                            if col >= tag_start && col <= tag_end && tag.contains('/') {
+                                return Some(tag.to_string());
+                            }
+                            current_pos = tag_end + 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pattern 3: "  domain: domain/ai" (trees field)
+        if trimmed.contains(':') && !trimmed.starts_with("tags:") && !trimmed.starts_with("trees:") {
+            if let Some(colon_pos) = trimmed.find(':') {
+                let value = trimmed[colon_pos + 1..].trim();
+                if value.contains('/') {
+                    return Some(value.to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if cursor is in a tags/trees context and return the prefix being typed
+    fn get_tag_completion_prefix(&self, content: &str, position: Position) -> Option<String> {
+        let lines: Vec<&str> = content.lines().collect();
+        let line_idx = position.line as usize;
+        let col = position.character as usize;
+
+        // Check if we're in frontmatter
+        let mut in_frontmatter = false;
+        let mut frontmatter_end = 0;
+        for (i, line) in lines.iter().enumerate() {
+            if i == 0 && line.trim() == "---" {
+                in_frontmatter = true;
+                continue;
+            }
+            if in_frontmatter && line.trim() == "---" {
+                frontmatter_end = i;
+                break;
+            }
+        }
+
+        if line_idx == 0 || line_idx >= frontmatter_end {
+            return None;
+        }
+
+        let line = lines.get(line_idx)?;
+        let trimmed = line.trim();
+
+        // Pattern 1: "  - prefix" (list item in tags array)
+        if trimmed.starts_with("- ") {
+            for i in (0..line_idx).rev() {
+                let prev = lines[i].trim();
+                if prev == "tags:" || prev.starts_with("tags:") {
+                    let prefix = &trimmed[2..col.saturating_sub(line.len() - trimmed.len())];
+                    return Some(prefix.trim().to_string());
+                }
+                if !prev.starts_with("- ") && !prev.is_empty() {
+                    break;
+                }
+            }
+        }
+
+        // Pattern 2: "tags: [prefix" or inside array
+        if trimmed.starts_with("tags:") && trimmed.contains('[') {
+            let before_cursor = &line[..col.min(line.len())];
+            if let Some(start) = before_cursor.rfind(|c| c == '[' || c == ',') {
+                let prefix = before_cursor[start + 1..].trim();
+                return Some(prefix.to_string());
+            }
+        }
+
+        // Pattern 3: "trees:" block - "  domain: domain/ai"
+        if trimmed.contains(':') && !trimmed.starts_with("tags:") && !trimmed.starts_with("trees:") {
+            for i in (0..line_idx).rev() {
+                let prev = lines[i].trim();
+                if prev == "trees:" || prev.starts_with("trees:") {
+                    if let Some(colon_pos) = trimmed.find(':') {
+                        let after_colon = &trimmed[colon_pos + 1..];
+                        return Some(after_colon.trim().to_string());
+                    }
+                }
+                if !prev.contains(':') || prev.starts_with("tags:") {
+                    break;
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Generate completion items for tree paths
+    fn complete_tree_paths(&self, prefix: &str) -> CompletionResponse {
+        let store = self.graph_store.read().unwrap();
+
+        let mut items: Vec<CompletionItem> = Vec::new();
+
+        // Get existing tree paths from store
+        if let Some(store) = store.as_ref() {
+            if let Ok(paths) = store.all_tree_paths() {
+                for path in paths {
+                    if prefix.is_empty() || path.starts_with(prefix) {
+                        items.push(CompletionItem {
+                            label: path.clone(),
+                            kind: Some(CompletionItemKind::FOLDER),
+                            detail: Some("tree path".to_string()),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+        }
+
+        // Also suggest note titles as potential tree nodes
+        let notes = self.notes.read().unwrap();
+        for note in notes.values() {
+            if !prefix.is_empty() && prefix.contains('/') {
+                let tree = prefix.split('/').next().unwrap_or("");
+                let path = format!("{}/{}", tree, note.title);
+                if path.starts_with(prefix) && !items.iter().any(|i| i.label == path) {
+                    items.push(CompletionItem {
+                        label: path,
+                        kind: Some(CompletionItemKind::FILE),
+                        detail: Some(note.path.to_string_lossy().to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        CompletionResponse::Array(items)
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -485,6 +666,23 @@ impl LanguageServer for KbaseLanguageServer {
         let content = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
 
         if let Some(content) = content {
+            // Check for tag path (e.g., domain/ai) in frontmatter
+            if let Some(tag_path) = self.get_tag_at_position(&content, position) {
+                // Navigate to the last segment (parent note)
+                if let Some(parent) = tag_path.split('/').last() {
+                    if let Some(note) = self.find_note_by_title(parent) {
+                        let target_uri = Url::from_file_path(&note.path).ok();
+                        if let Some(target_uri) = target_uri {
+                            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                                uri: target_uri,
+                                range: Range::default(),
+                            })));
+                        }
+                    }
+                }
+            }
+
+            // Check for wiki link
             if let Some(link_target) = self.get_link_at_position(&content, position) {
                 if let Some(note) = self.find_note_by_title(&link_target) {
                     let target_uri = Url::from_file_path(&note.path).ok();
@@ -600,7 +798,12 @@ impl LanguageServer for KbaseLanguageServer {
         if let Some(content) = content {
             let lines: Vec<&str> = content.lines().collect();
             if let Some(line) = lines.get(position.line as usize) {
-                let before_cursor = &line[..position.character as usize];
+                let before_cursor = &line[..(position.character as usize).min(line.len())];
+
+                // Check if we're in tags/trees context (frontmatter)
+                if let Some(tag_prefix) = self.get_tag_completion_prefix(&content, position) {
+                    return Ok(Some(self.complete_tree_paths(&tag_prefix)));
+                }
 
                 // Check if we're inside [[
                 if before_cursor.ends_with("[[") || before_cursor.contains("[[") {

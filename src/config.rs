@@ -32,12 +32,58 @@ pub enum EmbeddingBackend {
     Ollama, // Ollama server
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TreeSyntax {
+    Tags,  // tags: [domain/ai]
+    Trees, // trees: { domain: domain/ai }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TreesConfig {
+    /// Which syntaxes to recognize (default: both)
+    #[serde(default = "TreesConfig::default_syntax")]
+    pub syntax: Vec<TreeSyntax>,
+    /// Warn about orphan notes in tree paths (default: true)
+    #[serde(default = "TreesConfig::default_warn_orphans")]
+    pub warn_orphans: bool,
+}
+
+impl Default for TreesConfig {
+    fn default() -> Self {
+        Self {
+            syntax: Self::default_syntax(),
+            warn_orphans: true,
+        }
+    }
+}
+
+impl TreesConfig {
+    fn default_syntax() -> Vec<TreeSyntax> {
+        vec![TreeSyntax::Tags, TreeSyntax::Trees]
+    }
+
+    fn default_warn_orphans() -> bool {
+        true
+    }
+
+    pub fn supports_tags(&self) -> bool {
+        self.syntax.contains(&TreeSyntax::Tags)
+    }
+
+    pub fn supports_trees(&self) -> bool {
+        self.syntax.contains(&TreeSyntax::Trees)
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
     pub link_syntax: LinkSyntax,
     #[serde(default)]
     pub embeddings: EmbeddingsConfig,
+    #[serde(default)]
+    pub trees: TreesConfig,
 }
 
 impl Config {

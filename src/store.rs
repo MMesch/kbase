@@ -145,6 +145,23 @@ impl Store {
             self.ensure_tag_hierarchy(tag)?;
         }
 
+        // Add tree edges: <note> <kb:child/{tree}> <parent_note>
+        for edge in &note.tree_edges {
+            // The parent is the last element in the path
+            // Create edge from this note to its parent
+            let parent_iri = self.note_iri_by_title(&edge.parent);
+            let predicate = self.tree_predicate(&edge.tree);
+            self.inner.insert(&Quad::new(
+                note_iri.clone(),
+                predicate,
+                parent_iri,
+                GraphNameRef::DefaultGraph,
+            ))?;
+
+            // Also ensure intermediate nodes exist in the hierarchy
+            self.ensure_tree_hierarchy(&edge.tree, &edge.ancestors)?;
+        }
+
         // Add other fields as literals
         for (key, value) in &note.fields {
             if let Some(s) = value.as_str() {
@@ -579,6 +596,188 @@ impl Store {
 
     fn iri(&self, local: &str) -> NamedNode {
         NamedNode::new_unchecked(format!("{}{}", KBASE_NS, local))
+    }
+
+    /// Create IRI for a note by title (for tree edges)
+    fn note_iri_by_title(&self, title: &str) -> NamedNode {
+        let encoded = title.replace(' ', "%20").replace('#', "%23");
+        NamedNode::new_unchecked(format!("{}note/title/{}", KBASE_NS, encoded))
+    }
+
+    /// Create predicate for tree edge: kb:child/{tree_name}
+    fn tree_predicate(&self, tree: &str) -> NamedNode {
+        NamedNode::new_unchecked(format!("{}child/{}", KBASE_NS, tree))
+    }
+
+    /// Ensure all nodes in a tree hierarchy exist
+    fn ensure_tree_hierarchy(&self, tree: &str, ancestors: &[String]) -> Result<()> {
+        let predicate = self.tree_predicate(tree);
+
+        // Create edges between consecutive ancestors
+        // e.g., for [domain, ai, llms]: domain<-ai, ai<-llms
+        for i in 1..ancestors.len() {
+            let child_iri = self.note_iri_by_title(&ancestors[i]);
+            let parent_iri = self.note_iri_by_title(&ancestors[i - 1]);
+
+            self.inner.insert(&Quad::new(
+                child_iri,
+                predicate.clone(),
+                parent_iri,
+                GraphNameRef::DefaultGraph,
+            ))?;
+        }
+
+        Ok(())
+    }
+
+    /// Get children of a note in a specific tree
+    pub fn tree_children(&self, tree: &str, parent_title: &str) -> Result<Vec<String>> {
+        let parent_iri = self.note_iri_by_title(parent_title);
+        let predicate = format!("{}child/{}", KBASE_NS, tree);
+
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+
+            SELECT ?child WHERE {{
+                ?child <{predicate}> <{}> .
+            }}
+            "#,
+            parent_iri.as_str()
+        );
+
+        let mut children = Vec::new();
+        let prefix = format!("{}note/title/", KBASE_NS);
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions {
+                let solution = solution?;
+                if let Some(Term::NamedNode(child)) = solution.get("child") {
+                    if let Some(title) = child.as_str().strip_prefix(&prefix) {
+                        let decoded = title.replace("%20", " ").replace("%23", "#");
+                        children.push(decoded);
+                    }
+                }
+            }
+        }
+
+        Ok(children)
+    }
+
+    /// Get all descendants of a note in a specific tree (recursive)
+    pub fn tree_descendants(&self, tree: &str, parent_title: &str) -> Result<Vec<String>> {
+        let parent_iri = self.note_iri_by_title(parent_title);
+        let predicate = format!("{}child/{}", KBASE_NS, tree);
+
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+
+            SELECT ?descendant WHERE {{
+                ?descendant <{predicate}>+ <{}> .
+            }}
+            "#,
+            parent_iri.as_str()
+        );
+
+        let mut descendants = Vec::new();
+        let prefix = format!("{}note/title/", KBASE_NS);
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions {
+                let solution = solution?;
+                if let Some(Term::NamedNode(desc)) = solution.get("descendant") {
+                    if let Some(title) = desc.as_str().strip_prefix(&prefix) {
+                        let decoded = title.replace("%20", " ").replace("%23", "#");
+                        descendants.push(decoded);
+                    }
+                }
+            }
+        }
+
+        Ok(descendants)
+    }
+
+    /// Get all tree roots (nodes with no parent in that tree)
+    pub fn tree_roots(&self, tree: &str) -> Result<Vec<String>> {
+        let predicate = format!("{}child/{}", KBASE_NS, tree);
+
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+
+            SELECT DISTINCT ?root WHERE {{
+                ?child <{predicate}> ?root .
+                FILTER NOT EXISTS {{ ?root <{predicate}> ?parent }}
+            }}
+            "#
+        );
+
+        let mut roots = Vec::new();
+        let prefix = format!("{}note/title/", KBASE_NS);
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions {
+                let solution = solution?;
+                if let Some(Term::NamedNode(root)) = solution.get("root") {
+                    if let Some(title) = root.as_str().strip_prefix(&prefix) {
+                        let decoded = title.replace("%20", " ").replace("%23", "#");
+                        roots.push(decoded);
+                    }
+                }
+            }
+        }
+
+        Ok(roots)
+    }
+
+    /// Get all tree paths for autocompletion
+    pub fn all_tree_paths(&self) -> Result<Vec<String>> {
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+
+            SELECT DISTINCT ?predicate ?child ?parent WHERE {{
+                ?child ?predicate ?parent .
+                FILTER(STRSTARTS(STR(?predicate), "{KBASE_NS}child/"))
+            }}
+            "#
+        );
+
+        let mut paths = std::collections::HashSet::new();
+        let note_prefix = format!("{}note/title/", KBASE_NS);
+        let pred_prefix = format!("{}child/", KBASE_NS);
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions {
+                let solution = solution?;
+                if let (
+                    Some(Term::NamedNode(pred)),
+                    Some(Term::NamedNode(child)),
+                    Some(Term::NamedNode(parent)),
+                ) = (
+                    solution.get("predicate"),
+                    solution.get("child"),
+                    solution.get("parent"),
+                ) {
+                    if let (Some(tree), Some(child_title), Some(parent_title)) = (
+                        pred.as_str().strip_prefix(&pred_prefix),
+                        child.as_str().strip_prefix(&note_prefix),
+                        parent.as_str().strip_prefix(&note_prefix),
+                    ) {
+                        let child_decoded = child_title.replace("%20", " ");
+                        let parent_decoded = parent_title.replace("%20", " ");
+                        // Add both the parent path and child path
+                        paths.insert(format!("{}/{}", tree, parent_decoded));
+                        paths.insert(format!("{}/{}/{}", tree, parent_decoded, child_decoded));
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<String> = paths.into_iter().collect();
+        result.sort();
+        Ok(result)
     }
 
     /// Validate graph constraints using SPARQL queries
