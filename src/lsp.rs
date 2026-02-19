@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use tokio::sync::mpsc;
+use tracing::warn;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -15,7 +16,12 @@ use crate::note::{self, Link, Note};
 use crate::store::Store;
 use crate::vault;
 
-/// LSP backend for kbase
+/// LSP backend for kbase.
+///
+/// Fields use `RwLock` for interior mutability because `LanguageServer` trait methods
+/// take `&self` (not `&mut self`) to allow concurrent request handling. `RwLock` permits
+/// multiple simultaneous readers OR one exclusive writer, so handlers like hover and
+/// completion can read `notes` concurrently while `refresh_notes` has exclusive write access.
 pub struct KbaseLanguageServer {
     client: Client,
     /// Cached notes indexed by file path
@@ -37,6 +43,12 @@ pub struct KbaseLanguageServer {
 }
 
 impl KbaseLanguageServer {
+    /// Creates a new server instance with empty/uninitialized state.
+    ///
+    /// Fields like `vault_path` and `graph_store` start as `None` because the actual
+    /// initialization happens later in the LSP lifecycle: `initialize()` receives the
+    /// workspace root from the editor, and `initialized()` loads the graph store and
+    /// starts the file watcher.
     pub fn new(client: Client) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         Self {
@@ -77,14 +89,19 @@ impl KbaseLanguageServer {
         let mut debouncer = new_debouncer(
             Duration::from_millis(500),
             move |res: std::result::Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {
-                if let Ok(events) = res {
-                    for event in events {
-                        if event.kind == DebouncedEventKind::Any {
-                            // Only process markdown files
-                            if event.path.extension().is_some_and(|ext| ext == "md") {
-                                let _ = tx.send(event.path);
+                match res {
+                    Ok(events) => {
+                        for event in events {
+                            if event.kind == DebouncedEventKind::Any {
+                                // Only process markdown files
+                                if event.path.extension().is_some_and(|ext| ext == "md") {
+                                    let _ = tx.send(event.path);
+                                }
                             }
                         }
+                    }
+                    Err(e) => {
+                        warn!("File watcher error: {}", e);
                     }
                 }
             },
