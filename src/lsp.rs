@@ -425,7 +425,8 @@ impl KbaseLanguageServer {
     }
 
     /// Check if cursor is in a tags/trees context and return the prefix being typed
-    fn get_tag_completion_prefix(&self, content: &str, position: Position) -> Option<String> {
+    /// Returns (prefix, prefix_start_col) for tag/tree completion context
+    fn get_tag_completion_prefix(&self, content: &str, position: Position) -> Option<(String, u32)> {
         let lines: Vec<&str> = content.lines().collect();
         let line_idx = position.line as usize;
         let col = position.character as usize;
@@ -450,14 +451,17 @@ impl KbaseLanguageServer {
 
         let line = lines.get(line_idx)?;
         let trimmed = line.trim();
+        let indent = line.len() - trimmed.len();
 
         // Pattern 1: "  - prefix" (list item in tags array)
         if trimmed.starts_with("- ") {
             for i in (0..line_idx).rev() {
                 let prev = lines[i].trim();
                 if prev == "tags:" || prev.starts_with("tags:") {
-                    let prefix = &trimmed[2..col.saturating_sub(line.len() - trimmed.len())];
-                    return Some(prefix.trim().to_string());
+                    // Prefix starts after "- " in the trimmed line
+                    let prefix_start = indent + 2;
+                    let prefix = &line[prefix_start..col.min(line.len())];
+                    return Some((prefix.to_string(), prefix_start as u32));
                 }
                 if !prev.starts_with("- ") && !prev.is_empty() {
                     break;
@@ -468,9 +472,13 @@ impl KbaseLanguageServer {
         // Pattern 2: "tags: [prefix" or inside array
         if trimmed.starts_with("tags:") && trimmed.contains('[') {
             let before_cursor = &line[..col.min(line.len())];
-            if let Some(start) = before_cursor.rfind(|c| c == '[' || c == ',') {
-                let prefix = before_cursor[start + 1..].trim();
-                return Some(prefix.to_string());
+            if let Some(bracket_pos) = before_cursor.rfind(|c| c == '[' || c == ',') {
+                // Find where actual content starts (skip whitespace after [ or ,)
+                let after_bracket = &before_cursor[bracket_pos + 1..];
+                let space_count = after_bracket.len() - after_bracket.trim_start().len();
+                let prefix_start = bracket_pos + 1 + space_count;
+                let prefix = &before_cursor[prefix_start..];
+                return Some((prefix.to_string(), prefix_start as u32));
             }
         }
 
@@ -480,8 +488,12 @@ impl KbaseLanguageServer {
                 let prev = lines[i].trim();
                 if prev == "trees:" || prev.starts_with("trees:") {
                     if let Some(colon_pos) = trimmed.find(':') {
+                        // Prefix starts after ":" in the trimmed line
                         let after_colon = &trimmed[colon_pos + 1..];
-                        return Some(after_colon.trim().to_string());
+                        let space_count = after_colon.len() - after_colon.trim_start().len();
+                        let prefix_start = indent + colon_pos + 1 + space_count;
+                        let prefix = &line[prefix_start..col.min(line.len())];
+                        return Some((prefix.to_string(), prefix_start as u32));
                     }
                 }
                 if !prev.contains(':') || prev.starts_with("tags:") {
@@ -494,10 +506,27 @@ impl KbaseLanguageServer {
     }
 
     /// Generate completion items for tree paths
-    fn complete_tree_paths(&self, prefix: &str) -> CompletionResponse {
+    /// `prefix` is what the user has typed so far
+    /// `position` is the cursor position
+    /// `prefix_start_col` is where the prefix starts in the line
+    fn complete_tree_paths(
+        &self,
+        prefix: &str,
+        position: Position,
+        prefix_start_col: u32,
+    ) -> CompletionResponse {
         let store = self.graph_store.read().unwrap();
 
         let mut items: Vec<CompletionItem> = Vec::new();
+
+        // Range to replace: from prefix start to cursor position
+        let replace_range = Range {
+            start: Position {
+                line: position.line,
+                character: prefix_start_col,
+            },
+            end: position,
+        };
 
         // Get existing tree paths from store
         if let Some(store) = store.as_ref() {
@@ -508,6 +537,10 @@ impl KbaseLanguageServer {
                             label: path.clone(),
                             kind: Some(CompletionItemKind::FOLDER),
                             detail: Some("tree path".to_string()),
+                            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                                range: replace_range,
+                                new_text: path,
+                            })),
                             ..Default::default()
                         });
                     }
@@ -523,9 +556,13 @@ impl KbaseLanguageServer {
                 let path = format!("{}/{}", tree, note.title);
                 if path.starts_with(prefix) && !items.iter().any(|i| i.label == path) {
                     items.push(CompletionItem {
-                        label: path,
+                        label: path.clone(),
                         kind: Some(CompletionItemKind::FILE),
                         detail: Some(note.path.to_string_lossy().to_string()),
+                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                            range: replace_range,
+                            new_text: path,
+                        })),
                         ..Default::default()
                     });
                 }
@@ -801,8 +838,8 @@ impl LanguageServer for KbaseLanguageServer {
                 let before_cursor = &line[..(position.character as usize).min(line.len())];
 
                 // Check if we're in tags/trees context (frontmatter)
-                if let Some(tag_prefix) = self.get_tag_completion_prefix(&content, position) {
-                    return Ok(Some(self.complete_tree_paths(&tag_prefix)));
+                if let Some((tag_prefix, prefix_start)) = self.get_tag_completion_prefix(&content, position) {
+                    return Ok(Some(self.complete_tree_paths(&tag_prefix, position, prefix_start)));
                 }
 
                 // Check if we're inside [[
