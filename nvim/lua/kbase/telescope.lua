@@ -183,60 +183,6 @@ function M.search(opts)
   picker:find()
 end
 
--- Backlinks picker
-function M.backlinks(opts)
-  opts = opts or {}
-
-  -- Get current note title from buffer
-  local current_file = vim.fn.expand("%:p")
-  local current_name = vim.fn.expand("%:t:r")
-
-  -- Try to get title from frontmatter
-  local lines = vim.api.nvim_buf_get_lines(0, 0, 20, false)
-  local title = current_name
-  for _, line in ipairs(lines) do
-    local match = line:match("^title:%s*[\"']?([^\"']+)[\"']?$")
-    if match then
-      title = match
-      break
-    end
-  end
-
-  lsp_execute("kbase.backlinks", { title }, function(results)
-    if #results == 0 then
-      vim.notify("No backlinks found for: " .. title, vim.log.levels.INFO)
-      return
-    end
-
-    pickers.new(opts, {
-      prompt_title = "Backlinks to: " .. title,
-      finder = finders.new_table({
-        results = results,
-        entry_maker = function(entry)
-          return {
-            value = entry,
-            display = entry.title,
-            ordinal = entry.title .. " " .. entry.path,
-            path = entry.path,
-          }
-        end,
-      }),
-      sorter = conf.generic_sorter(opts),
-      previewer = note_previewer,
-      attach_mappings = function(prompt_bufnr, map)
-        actions.select_default:replace(function()
-          actions.close(prompt_bufnr)
-          local selection = action_state.get_selected_entry()
-          if selection and selection.path then
-            vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
-          end
-        end)
-        return true
-      end,
-    }):find()
-  end)
-end
-
 -- Notes list picker
 function M.notes(opts)
   opts = opts or {}
@@ -264,63 +210,6 @@ function M.notes(opts)
           local selection = action_state.get_selected_entry()
           if selection and selection.path then
             vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
-          end
-        end)
-        return true
-      end,
-    }):find()
-  end)
-end
-
--- Tags picker with hierarchy - shows indented tree, select to see notes
-function M.tags(opts)
-  opts = opts or {}
-
-  lsp_execute("kbase.tags", {}, function(result)
-    local flat_tags = result.tags or {}
-
-    if #flat_tags == 0 then
-      vim.notify("No tags found", vim.log.levels.INFO)
-      return
-    end
-
-    -- Build hierarchical display from flat tags
-    -- Tags like "type/use-case" become indented under "type"
-    local entries = {}
-    local seen_parents = {}
-
-    for _, tag in ipairs(flat_tags) do
-      local depth = select(2, tag:gsub("/", "/")) -- count slashes
-      local indent = string.rep("  ", depth)
-      local display_name = tag:match("([^/]+)$") or tag -- last segment
-
-      table.insert(entries, {
-        tag = tag,
-        display = indent .. display_name,
-        depth = depth,
-      })
-    end
-
-    pickers.new(opts, {
-      prompt_title = "Tags",
-      finder = finders.new_table({
-        results = entries,
-        entry_maker = function(entry)
-          return {
-            value = entry.tag,
-            display = entry.display,
-            ordinal = entry.tag,
-            depth = entry.depth,
-          }
-        end,
-      }),
-      sorter = conf.generic_sorter(opts),
-      attach_mappings = function(prompt_bufnr, map)
-        actions.select_default:replace(function()
-          actions.close(prompt_bufnr)
-          local selection = action_state.get_selected_entry()
-          if selection then
-            M.notes({ tag = selection.value })
           end
         end)
         return true

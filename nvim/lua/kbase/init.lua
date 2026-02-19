@@ -20,15 +20,15 @@ function M.setup(opts)
   if opts.telescope ~= false then
     local prefix = opts.telescope_prefix or "<leader>k"
     vim.keymap.set("n", prefix .. "s", M.telescope.search, { desc = "kbase: semantic search" })
-    vim.keymap.set("n", prefix .. "b", M.telescope.backlinks, { desc = "kbase: backlinks" })
     vim.keymap.set("n", prefix .. "n", M.telescope.notes, { desc = "kbase: all notes" })
-    vim.keymap.set("n", prefix .. "t", M.telescope.tags, { desc = "kbase: tags" })
+    vim.keymap.set("n", prefix .. "b", vim.lsp.buf.references, { desc = "kbase: backlinks" })
   end
 
   -- Neo-tree integration
   if opts.neotree ~= false then
+    local prefix = opts.telescope_prefix or "<leader>k"
     M.neotree.setup({
-      keymap = opts.neotree_keymap,
+      keymap = opts.neotree_keymap or (prefix .. "t"),
     })
   end
 end
