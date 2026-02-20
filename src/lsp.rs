@@ -16,6 +16,12 @@ use crate::note::{self, Link, Note};
 use crate::store::Store;
 use crate::vault;
 
+/// Link target - either a title (from wiki link) or slug (from markdown link)
+enum LinkTarget {
+    Title(String),
+    Slug(String),
+}
+
 /// Convert a slug (my-note-title) to title case (My Note Title)
 fn slug_to_title(slug: &str) -> String {
     slug.split('-')
@@ -296,13 +302,29 @@ impl KbaseLanguageServer {
         }
     }
 
-    /// Find note by title (fuzzy match)
+    /// Find note by title (case-insensitive)
     fn find_note_by_title(&self, title: &str) -> Option<Note> {
         let notes = self.notes.read().unwrap();
         let title_lower = title.to_lowercase();
         notes
             .values()
             .find(|n| n.title.to_lowercase() == title_lower)
+            .cloned()
+    }
+
+    /// Find note by slug (filename without .md extension)
+    fn find_note_by_slug(&self, slug: &str) -> Option<Note> {
+        let notes = self.notes.read().unwrap();
+        let slug_lower = slug.to_lowercase();
+        notes
+            .values()
+            .find(|n| {
+                n.path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_lowercase() == slug_lower)
+                    .unwrap_or(false)
+            })
             .cloned()
     }
 
@@ -348,8 +370,8 @@ impl KbaseLanguageServer {
             .collect()
     }
 
-    /// Extract link at position (wiki [[link]] or markdown [text](path.md))
-    fn get_link_at_position(&self, content: &str, position: Position) -> Option<String> {
+    /// Link target extracted from content - either a title (wiki) or slug (markdown)
+    fn get_link_at_position(&self, content: &str, position: Position) -> Option<LinkTarget> {
         let lines: Vec<&str> = content.lines().collect();
         let line = lines.get(position.line as usize)?;
         let col = position.character as usize;
@@ -361,7 +383,7 @@ impl KbaseLanguageServer {
         if let (Some(start), Some(end)) = (before.rfind("[["), after.find("]]")) {
             let link_content = &line[start + 2..col + end];
             let target = link_content.split('|').next()?;
-            return Some(target.to_string());
+            return Some(LinkTarget::Title(target.to_string()));
         }
 
         // Try markdown link: [text](path.md)
@@ -371,10 +393,8 @@ impl KbaseLanguageServer {
             if let Some(paren_end) = after.find(')') {
                 let path = &line[paren_start + 2..col + paren_end];
                 if path.ends_with(".md") {
-                    // Convert slug to title
-                    let slug = path.trim_end_matches(".md");
-                    let title = slug_to_title(slug);
-                    return Some(title);
+                    let slug = path.trim_end_matches(".md").to_string();
+                    return Some(LinkTarget::Slug(slug));
                 }
             }
         } else if let Some(_bracket_start) = before.rfind('[') {
@@ -387,9 +407,8 @@ impl KbaseLanguageServer {
                     if path_end > path_start {
                         let path = &line[path_start..path_end];
                         if path.ends_with(".md") {
-                            let slug = path.trim_end_matches(".md");
-                            let title = slug_to_title(slug);
-                            return Some(title);
+                            let slug = path.trim_end_matches(".md").to_string();
+                            return Some(LinkTarget::Slug(slug));
                         }
                     }
                 }
@@ -872,9 +891,21 @@ impl LanguageServer for KbaseLanguageServer {
                 }
             }
 
-            // Check for wiki link
+            // Check for wiki or markdown link
             if let Some(link_target) = self.get_link_at_position(&content, position) {
-                if let Some(note) = self.find_note_by_title(&link_target) {
+                let (note, title_for_create) = match &link_target {
+                    LinkTarget::Title(title) => {
+                        (self.find_note_by_title(title), title.clone())
+                    }
+                    LinkTarget::Slug(slug) => {
+                        // For markdown links, search by slug first, then by title
+                        let note = self.find_note_by_slug(slug)
+                            .or_else(|| self.find_note_by_title(&slug_to_title(slug)));
+                        (note, slug_to_title(slug))
+                    }
+                };
+
+                if let Some(note) = note {
                     let target_uri = Url::from_file_path(&note.path).ok();
                     if let Some(target_uri) = target_uri {
                         return Ok(Some(GotoDefinitionResponse::Scalar(Location {
@@ -884,7 +915,7 @@ impl LanguageServer for KbaseLanguageServer {
                     }
                 } else {
                     // Note doesn't exist - ask if user wants to create it
-                    if let Some(location) = self.offer_create_note(&link_target).await {
+                    if let Some(location) = self.offer_create_note(&title_for_create).await {
                         return Ok(Some(GotoDefinitionResponse::Scalar(location)));
                     }
                 }
@@ -964,7 +995,15 @@ impl LanguageServer for KbaseLanguageServer {
 
         if let Some(content) = content {
             if let Some(link_target) = self.get_link_at_position(&content, position) {
-                if let Some(note) = self.find_note_by_title(&link_target) {
+                let note = match &link_target {
+                    LinkTarget::Title(title) => self.find_note_by_title(title),
+                    LinkTarget::Slug(slug) => {
+                        self.find_note_by_slug(slug)
+                            .or_else(|| self.find_note_by_title(&slug_to_title(slug)))
+                    }
+                };
+
+                if let Some(note) = note {
                     // Read first 500 chars of note content as preview
                     if let Ok(note_content) = std::fs::read_to_string(&note.path) {
                         let preview: String = note_content.chars().take(500).collect();
