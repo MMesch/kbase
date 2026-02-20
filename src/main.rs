@@ -1,9 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
-use kbase::{config, config::Config, embeddings, lsp, note, schema, skills, vault};
+use kbase::{config, config::Config, embeddings, lsp, note, schema, skills, store, vault};
 
 #[derive(Parser)]
 #[command(name = "kbase")]
@@ -99,6 +99,54 @@ enum Commands {
         /// Number of top notes to show for each metric
         #[arg(short, long, default_value = "5")]
         limit: usize,
+    },
+    /// Run a SPARQL query on the knowledge graph
+    ///
+    /// Use "schema" as query to see full schema documentation.
+    ///
+    /// Schema (prefix kb: auto-added):
+    ///   Notes:  kb:note/{title} with kb:type kb:Note
+    ///   Props:  kb:title, kb:path, kb:linksTo, kb:hasTag, kb:mtime
+    ///   Tags:   kb:tag/{name} with kb:type kb:Tag, kb:parentTag
+    ///   Trees:  kb:child/{tree} predicate links child -> parent
+    ///
+    /// Multiline queries:
+    ///
+    ///   bash/zsh (single quotes):
+    ///     kbase query 'SELECT ?title WHERE {
+    ///       ?n kb:type kb:Note ; kb:title ?title .
+    ///     }'
+    ///
+    ///   bash/zsh (heredoc):
+    ///     kbase query "$(cat <<'EOF'
+    ///     SELECT ?title WHERE { ?n kb:title ?title }
+    ///     EOF
+    ///     )"
+    ///
+    ///   nushell:
+    ///     kbase query 'SELECT ?title WHERE {
+    ///       ?n kb:type kb:Note ; kb:title ?title .
+    ///     }'
+    ///
+    ///   fish:
+    ///     kbase query 'SELECT ?title WHERE {
+    ///       ?n kb:type kb:Note ; kb:title ?title .
+    ///     }'
+    ///
+    ///   PowerShell:
+    ///     kbase query @'
+    ///     SELECT ?title WHERE { ?n kb:title ?title }
+    ///     '@
+    ///
+    ///   Or use --file to read from a file:
+    ///     kbase query --file query.sparql
+    Query {
+        /// SPARQL SELECT query (kb: prefix auto-added), or "schema" for docs
+        #[arg(conflicts_with = "file")]
+        sparql: Option<String>,
+        /// Read query from file
+        #[arg(short, long)]
+        file: Option<PathBuf>,
     },
 }
 
@@ -480,6 +528,46 @@ fn main() -> Result<()> {
                 if orphans.len() > limit {
                     println!("- ... and {} more", orphans.len() - limit);
                 }
+            }
+        }
+        Commands::Query { sparql, file } => {
+            let vault_path = get_vault()?;
+            let store = vault::load(&vault_path)?;
+
+            // Get query from file or argument
+            let query = match (sparql, file) {
+                (Some(q), None) => q,
+                (None, Some(path)) => std::fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read {}", path.display()))?,
+                (None, None) => anyhow::bail!("Provide a query or use --file"),
+                (Some(_), Some(_)) => unreachable!(), // clap handles this
+            };
+
+            // Handle special "schema" query to show documentation
+            if query.trim().to_lowercase() == "schema" {
+                print!("{}", store::Store::schema_doc());
+                return Ok(());
+            }
+
+            let results = store.query(&query)?;
+
+            if results.is_empty() {
+                println!("No results");
+            } else {
+                // Print header from first row
+                if let Some(first) = results.first() {
+                    let headers: Vec<_> = first.iter().map(|(k, _)| k.as_str()).collect();
+                    println!("{}", headers.join("\t"));
+                    println!("{}", headers.iter().map(|h| "-".repeat(h.len())).collect::<Vec<_>>().join("\t"));
+                }
+
+                // Print rows
+                for row in &results {
+                    let values: Vec<_> = row.iter().map(|(_, v)| v.as_str()).collect();
+                    println!("{}", values.join("\t"));
+                }
+
+                eprintln!("\n({} results)", results.len());
             }
         }
     }

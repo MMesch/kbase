@@ -967,6 +967,90 @@ impl Store {
         Ok(violations)
     }
 
+    /// Run an arbitrary SPARQL SELECT query
+    /// Returns results as Vec of Vec<(var_name, value)>
+    pub fn query(&self, sparql: &str) -> Result<Vec<Vec<(String, String)>>> {
+        // Auto-add PREFIX if not present
+        let query = if sparql.to_uppercase().contains("PREFIX") {
+            sparql.to_string()
+        } else {
+            format!("PREFIX kb: <{}>\n{}", KBASE_NS, sparql)
+        };
+
+        let mut results = Vec::new();
+
+        match self.inner.query(&query)? {
+            QueryResults::Solutions(solutions) => {
+                let vars: Vec<String> = solutions.variables().iter().map(|v| v.as_str().to_string()).collect();
+                for solution in solutions.flatten() {
+                    let mut row = Vec::new();
+                    for var in &vars {
+                        let value = solution.get(var.as_str())
+                            .map(|term| match term {
+                                Term::NamedNode(n) => n.as_str().to_string(),
+                                Term::Literal(l) => l.value().to_string(),
+                                Term::BlankNode(b) => format!("_:{}", b.as_str()),
+                                Term::Triple(_) => "<triple>".to_string(),
+                            })
+                            .unwrap_or_default();
+                        row.push((var.clone(), value));
+                    }
+                    results.push(row);
+                }
+            }
+            QueryResults::Boolean(b) => {
+                results.push(vec![("result".to_string(), b.to_string())]);
+            }
+            QueryResults::Graph(_) => {
+                anyhow::bail!("CONSTRUCT/DESCRIBE queries not supported, use SELECT");
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Get the SPARQL schema documentation
+    pub fn schema_doc() -> &'static str {
+        r#"SPARQL Schema (prefix kb: <http://kbase.local/>):
+
+ENTITIES:
+  Notes:  kb:note/{encoded_title}  (type: kb:Note)
+  Tags:   kb:tag/{tag_path}        (type: kb:Tag)
+
+NOTE PROPERTIES:
+  kb:title    - Note title (literal)
+  kb:path     - File path (literal)
+  kb:mtime    - Modification time as Unix timestamp (literal)
+  kb:linksTo  - Link target title (literal, one per link)
+  kb:hasTag   - Tag IRI (links to kb:tag/*)
+
+TAG PROPERTIES:
+  kb:parentTag - Parent tag IRI (for hierarchical tags like domain/ai)
+
+TREE EDGES:
+  kb:child/{tree_name} - Links child note to parent note in a tree
+
+EXAMPLE QUERIES:
+  # All notes with their tags
+  SELECT ?title ?tag WHERE {
+    ?n kb:type kb:Note ; kb:title ?title ; kb:hasTag ?t .
+    BIND(REPLACE(STR(?t), "^.*tag/", "") AS ?tag)
+  }
+
+  # Notes linking to "Concept"
+  SELECT ?title WHERE {
+    ?n kb:type kb:Note ; kb:title ?title ; kb:linksTo "Concept" .
+  }
+
+  # Tag hierarchy
+  SELECT ?child ?parent WHERE {
+    ?c kb:type kb:Tag ; kb:parentTag ?p .
+    BIND(REPLACE(STR(?c), "^.*tag/", "") AS ?child)
+    BIND(REPLACE(STR(?p), "^.*tag/", "") AS ?parent)
+  }
+"#
+    }
+
     /// Export the graph as DOT format (Graphviz)
     pub fn export_dot(&self) -> Result<String> {
         let mut dot = String::from("digraph vault {\n");
