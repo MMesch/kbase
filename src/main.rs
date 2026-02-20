@@ -94,6 +94,12 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Show vault overview (tags, link structure, key notes)
+    Overview {
+        /// Number of top notes to show for each metric
+        #[arg(short, long, default_value = "5")]
+        limit: usize,
+    },
 }
 
 fn main() -> Result<()> {
@@ -408,6 +414,72 @@ fn main() -> Result<()> {
                     eprintln!("Exported to {}", path.display());
                 }
                 None => print!("{}", content),
+            }
+        }
+        Commands::Overview { limit } => {
+            let vault_path = get_vault()?;
+            let notes = vault::load_notes(&vault_path)?;
+            let store = vault::load(&vault_path)?;
+
+            // Count notes
+            println!("## Vault Overview\n");
+            println!("**Notes:** {}\n", notes.len());
+
+            // Tag summary
+            let tags = store.list_tags(None, false)?;
+            println!("**Tags:** {} unique tags\n", tags.len());
+            if !tags.is_empty() {
+                println!("### Top-level tags\n");
+                for tag in tags.iter().filter(|t| !t.contains('/')) {
+                    println!("- {}", tag);
+                }
+                println!();
+            }
+
+            // Build link degree maps
+            // in_degree: how many notes link TO this note (backlinks)
+            // out_degree: how many notes this note links TO
+            let mut in_degree: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            let mut out_degree: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+            for note in &notes {
+                out_degree.insert(note.title.clone(), note.links.len());
+                for link in &note.links {
+                    *in_degree.entry(link.target.clone()).or_insert(0) += 1;
+                }
+            }
+
+            // Top by in-degree (most backlinked = important concepts)
+            println!("### Most referenced (in-degree = backlinks)\n");
+            println!("_Notes that many other notes link to - likely key concepts_\n");
+            let mut by_in: Vec<_> = in_degree.iter().collect();
+            by_in.sort_by(|a, b| b.1.cmp(a.1));
+            for (title, count) in by_in.iter().take(limit) {
+                println!("- **{}** ({} backlinks)", title, count);
+            }
+            println!();
+
+            // Top by out-degree (most outlinks = index/MOC notes)
+            println!("### Most referencing (out-degree = outlinks)\n");
+            println!("_Notes that link to many others - likely index or MOC notes_\n");
+            let mut by_out: Vec<_> = out_degree.iter().collect();
+            by_out.sort_by(|a, b| b.1.cmp(a.1));
+            for (title, count) in by_out.iter().take(limit) {
+                println!("- **{}** ({} outlinks)", title, count);
+            }
+
+            // Orphans (no links in or out)
+            let orphans: Vec<_> = notes.iter()
+                .filter(|n| n.links.is_empty() && !in_degree.contains_key(&n.title))
+                .collect();
+            if !orphans.is_empty() {
+                println!("\n### Orphan notes (no links)\n");
+                for note in orphans.iter().take(limit) {
+                    println!("- {}", note.title);
+                }
+                if orphans.len() > limit {
+                    println!("- ... and {} more", orphans.len() - limit);
+                }
             }
         }
     }
