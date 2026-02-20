@@ -806,47 +806,10 @@ impl LanguageServer for KbaseLanguageServer {
         let content = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
 
         if let Some(content) = content {
-            // Check for tag path (e.g., domain/ai) in frontmatter
+            // Check for tag path (e.g., tech/ai/webchat) in frontmatter
             if let Some(tag_path) = self.get_tag_at_position(&content, position) {
-                // Get all notes with this tag or any descendant tag
-                // Use a block to ensure the RwLockGuard is dropped before any await
-                let locations = {
-                    let store = self.graph_store.read().unwrap();
-                    if let Some(store) = store.as_ref() {
-                        if let Ok(note_titles) = store.list_notes(Some(&tag_path), false) {
-                            let locs: Vec<Location> = note_titles
-                                .iter()
-                                .filter_map(|title| {
-                                    // title format is "Title (path)" - extract path
-                                    let path_start = title.rfind('(')?;
-                                    let path_end = title.rfind(')')?;
-                                    let path_str = &title[path_start + 1..path_end];
-                                    let note_path = std::path::PathBuf::from(path_str);
-                                    let uri = Url::from_file_path(&note_path).ok()?;
-                                    Some(Location {
-                                        uri,
-                                        range: Range::default(),
-                                    })
-                                })
-                                .collect();
-                            if !locs.is_empty() {
-                                Some(locs)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-
-                if let Some(locs) = locations {
-                    return Ok(Some(GotoDefinitionResponse::Array(locs)));
-                }
-
-                // Fallback: navigate to the tag note (last segment of path)
+                // Primary action: navigate to the tag note (last segment of path)
+                // e.g., for "tech/ai/webchat", try to find "webchat" note
                 if let Some(tag_name) = tag_path.split('/').last() {
                     if let Some(note) = self.find_note_by_title(tag_name) {
                         let target_uri = Url::from_file_path(&note.path).ok();
