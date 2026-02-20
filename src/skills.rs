@@ -45,8 +45,11 @@ Search the knowledge base for: $ARGUMENTS
 ## Results
 
 !`kbase search "$ARGUMENTS" --limit 10`
+!`kbase -v /path/to/vault search "$ARGUMENTS" --limit 10`
 
 ## Instructions
+
+Run from within a vault directory or specify vault path with `-v`.
 
 Use the search results above to inform your response. Reference specific notes when relevant.
 If no results are found, acknowledge this and suggest alternative search terms.
@@ -64,8 +67,11 @@ Finding notes similar to: $ARGUMENTS
 ## Similar Notes
 
 !`kbase similar "$ARGUMENTS" --limit 10`
+!`kbase -v /path/to/vault similar "$ARGUMENTS" --limit 10`
 
 ## Instructions
+
+Run from within a vault directory or specify vault path with `-v`.
 
 Use these related notes to provide additional context or connections.
 Highlight relevant relationships between the notes.
@@ -83,8 +89,11 @@ Finding notes that link to: $ARGUMENTS
 ## References
 
 !`kbase backlinks "$ARGUMENTS"`
+!`kbase -v /path/to/vault backlinks "$ARGUMENTS"`
 
 ## Instructions
+
+Run from within a vault directory or specify vault path with `-v`.
 
 These notes reference the topic. Use them to understand:
 - How this concept relates to others
@@ -100,8 +109,11 @@ description: Validate the knowledge base against its schema
 # Knowledge Base Validation
 
 !`kbase validate`
+!`kbase -v /path/to/vault validate`
 
 ## Instructions
+
+Run from within a vault directory or specify vault path with `-v`.
 
 Review any validation errors above. For each error:
 1. Explain what the error means
@@ -144,8 +156,11 @@ description: Get an overview of the knowledge base structure
 # Knowledge Base Overview
 
 !`kbase overview --limit 10`
+!`kbase -v /path/to/vault overview --limit 10`
 
 ## Instructions
+
+Run from within a vault directory or specify vault path with `-v`.
 
 Use this overview to understand:
 - **Tags**: The taxonomy and categorization of knowledge
@@ -168,12 +183,16 @@ Query: $ARGUMENTS
 ## Schema Reference
 
 !`kbase query schema`
+!`kbase -v /path/to/vault query schema`
 
 ## Query Results
 
 !`kbase query "$ARGUMENTS"`
+!`kbase -v /path/to/vault query "$ARGUMENTS"`
 
 ## Instructions
+
+Run from within a vault directory or specify vault path with `-v`.
 
 Help the user understand the query results. If the query failed, suggest corrections based on the schema.
 
