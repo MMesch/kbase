@@ -1,8 +1,12 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::model::*;
 use oxigraph::sparql::QueryResults;
 use oxigraph::store::Store as OxiStore;
@@ -13,19 +17,77 @@ const KBASE_NS: &str = "http://kbase.local/";
 
 pub struct Store {
     inner: OxiStore,
+    /// Path to N-Triples cache file (if using ntriples backend)
+    cache_path: Option<PathBuf>,
+    /// Whether the store has been modified since last save
+    dirty: AtomicBool,
 }
 
 impl Store {
-    /// Create an in-memory store
+    /// Create an in-memory store (no persistence)
     pub fn new() -> Result<Self> {
         let inner = OxiStore::new()?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            cache_path: None,
+            dirty: AtomicBool::new(false),
+        })
     }
 
-    /// Open or create a persistent store at the given path
+    /// Create an in-memory store with N-Triples file persistence
+    /// Loads existing data from the cache file if it exists
+    pub fn new_with_cache(cache_path: &Path) -> Result<Self> {
+        let inner = OxiStore::new()?;
+
+        // Load existing data if cache exists
+        if cache_path.exists() {
+            let file = File::open(cache_path)
+                .with_context(|| format!("Failed to open {}", cache_path.display()))?;
+            let reader = BufReader::new(file);
+            inner.bulk_loader().load_from_reader(
+                RdfParser::from_format(RdfFormat::NTriples),
+                reader,
+            )?;
+        }
+
+        Ok(Self {
+            inner,
+            cache_path: Some(cache_path.to_path_buf()),
+            dirty: AtomicBool::new(false),
+        })
+    }
+
+    /// Open or create a persistent RocksDB store at the given path
     pub fn open(path: &Path) -> Result<Self> {
         let inner = OxiStore::open(path)?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            cache_path: None,
+            dirty: AtomicBool::new(false),
+        })
+    }
+
+    /// Save to N-Triples cache file (if configured)
+    pub fn save(&self) -> Result<()> {
+        if let Some(ref cache_path) = self.cache_path {
+            if self.dirty.load(Ordering::Relaxed) {
+                let file = File::create(cache_path)
+                    .with_context(|| format!("Failed to create {}", cache_path.display()))?;
+                self.inner.dump_to_writer(RdfFormat::NTriples, file)?;
+                self.dirty.store(false, Ordering::Relaxed);
+            }
+        }
+        Ok(())
+    }
+
+    /// Mark the store as modified
+    fn mark_dirty(&self) {
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Check if store has unsaved changes
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.load(Ordering::Relaxed)
     }
 
     /// Get the stored mtime for a note (as unix timestamp)
@@ -110,7 +172,9 @@ impl Store {
 
     /// Remove a note completely (for deleted files)
     pub fn remove_note(&self, path: &str) -> Result<()> {
-        self.remove_note_triples(path)
+        self.remove_note_triples(path)?;
+        self.mark_dirty();
+        Ok(())
     }
 
     /// Remove orphaned tree hierarchy edges that no notes reference
@@ -206,6 +270,10 @@ impl Store {
                 parent,
                 GraphNameRef::DefaultGraph,
             ))?;
+        }
+
+        if count > 0 {
+            self.mark_dirty();
         }
 
         Ok(count)
@@ -313,6 +381,7 @@ impl Store {
             ))?;
         }
 
+        self.mark_dirty();
         Ok(())
     }
 

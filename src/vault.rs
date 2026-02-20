@@ -5,12 +5,13 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use walkdir::WalkDir;
 
-use crate::config::Config;
+use crate::config::{Config, StoreBackend};
 use crate::note;
 use crate::store::Store;
 
 const KBASE_DIR: &str = ".kbase";
 const GRAPH_DB: &str = "graph.db";
+const GRAPH_NT: &str = "graph.nt";
 
 /// Initialize a new vault at the given path
 pub fn init(path: &Path) -> Result<()> {
@@ -41,16 +42,28 @@ pub fn find_vault_root() -> Result<PathBuf> {
     }
 }
 
-/// Load vault using persistent store with incremental updates
-/// This is the primary way to load a vault - it uses the cached graph.db
-/// and only re-parses notes that have changed since last load.
+/// Load vault using the configured store backend
 pub fn load(vault_path: &Path) -> Result<Store> {
-    let (store, _updated) = load_persistent(vault_path)?;
-    Ok(store)
+    let config = Config::load(vault_path)?;
+    load_with_backend(vault_path, config.store)
+}
+
+/// Load vault with explicit backend choice
+pub fn load_with_backend(vault_path: &Path, backend: StoreBackend) -> Result<Store> {
+    match backend {
+        StoreBackend::Fresh => load_fresh(vault_path),
+        StoreBackend::Ntriples => {
+            let (store, _) = load_ntriples(vault_path)?;
+            Ok(store)
+        }
+        StoreBackend::Rocksdb => {
+            let (store, _) = load_rocksdb(vault_path)?;
+            Ok(store)
+        }
+    }
 }
 
 /// Load all notes into a fresh in-memory store (no caching)
-/// Use this only for testing or when you need a clean slate.
 pub fn load_fresh(vault_path: &Path) -> Result<Store> {
     let notes = load_notes(vault_path)?;
     let store = Store::new()?;
@@ -62,13 +75,37 @@ pub fn load_fresh(vault_path: &Path) -> Result<Store> {
     Ok(store)
 }
 
-/// Open or create a persistent store, performing incremental updates
+/// Load using N-Triples cache (fast startup, ~5ms)
 /// Returns the store and the number of notes updated
-pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
+pub fn load_ntriples(vault_path: &Path) -> Result<(Store, usize)> {
+    let cache_path = vault_path.join(KBASE_DIR).join(GRAPH_NT);
+    let store = Store::new_with_cache(&cache_path)?;
+    let config = Config::load(vault_path)?;
+
+    let updated = sync_store_with_files(&store, vault_path, &config)?;
+
+    // Save if anything changed
+    if updated > 0 {
+        store.save()?;
+    }
+
+    Ok((store, updated))
+}
+
+/// Load using RocksDB persistent store (slow startup, ~400ms)
+/// Returns the store and the number of notes updated
+pub fn load_rocksdb(vault_path: &Path) -> Result<(Store, usize)> {
     let db_path = vault_path.join(KBASE_DIR).join(GRAPH_DB);
     let store = Store::open(&db_path)?;
     let config = Config::load(vault_path)?;
 
+    let updated = sync_store_with_files(&store, vault_path, &config)?;
+
+    Ok((store, updated))
+}
+
+/// Sync store with filesystem - update changed notes, remove deleted ones
+fn sync_store_with_files(store: &Store, vault_path: &Path, config: &Config) -> Result<usize> {
     // Get all stored note paths and mtimes in a single query
     let stored_mtimes = store.get_all_note_mtimes()?;
 
@@ -123,7 +160,12 @@ pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
         store.cleanup_orphan_tags()?;
     }
 
-    Ok((store, updated))
+    Ok(updated)
+}
+
+/// Backward compat: alias for load_rocksdb
+pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
+    load_rocksdb(vault_path)
 }
 
 /// Update a single note in the persistent store

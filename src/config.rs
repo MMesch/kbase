@@ -39,6 +39,15 @@ pub enum EmbeddingBackend {
     Ollama, // Ollama server
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StoreBackend {
+    #[default]
+    Ntriples, // In-memory + N-Triples file (fast startup, ~5ms)
+    Rocksdb,  // Oxigraph persistent store (slow startup, ~400ms)
+    Fresh,    // In-memory only, rebuild from files each time
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TreeSyntax {
@@ -91,6 +100,8 @@ pub struct Config {
     pub embeddings: EmbeddingsConfig,
     #[serde(default)]
     pub trees: TreesConfig,
+    #[serde(default)]
+    pub store: StoreBackend,
 }
 
 impl Config {

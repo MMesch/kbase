@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 
-use kbase::{config, config::Config, embeddings, lsp, note, schema, skills, store, vault};
+use kbase::{config, config::Config, config::StoreBackend, embeddings, lsp, note, schema, skills, store, vault};
 
 #[derive(Parser)]
 #[command(name = "kbase")]
@@ -14,9 +14,9 @@ struct Cli {
     #[arg(short, long, global = true)]
     vault: Option<PathBuf>,
 
-    /// Bypass cached database, rebuild from files
-    #[arg(long, global = true)]
-    fresh: bool,
+    /// Store backend: ntriples (fast, default), rocksdb (slow), fresh (no cache)
+    #[arg(long, global = true, value_enum)]
+    store: Option<StoreBackendArg>,
 
     /// Show timing information for operations
     #[arg(long, global = true)]
@@ -24,6 +24,26 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum StoreBackendArg {
+    /// N-Triples file cache (fast startup, ~5ms)
+    Ntriples,
+    /// RocksDB persistent store (slow startup, ~400ms)
+    Rocksdb,
+    /// Fresh in-memory, rebuild from files each time
+    Fresh,
+}
+
+impl From<StoreBackendArg> for StoreBackend {
+    fn from(arg: StoreBackendArg) -> Self {
+        match arg {
+            StoreBackendArg::Ntriples => StoreBackend::Ntriples,
+            StoreBackendArg::Rocksdb => StoreBackend::Rocksdb,
+            StoreBackendArg::Fresh => StoreBackend::Fresh,
+        }
+    }
 }
 
 /// Timer helper for benchmarking
@@ -239,15 +259,14 @@ fn main() -> Result<()> {
         }
     };
 
-    // Load store respecting --fresh flag
+    // Load store with configured or overridden backend
     let load_store = |vault_path: &PathBuf, timer: &mut Timer| -> Result<store::Store> {
-        let store = if cli.fresh {
-            timer.lap("loading fresh store");
-            vault::load_fresh(vault_path)?
-        } else {
-            timer.lap("loading cached store");
-            vault::load(vault_path)?
+        let backend = match cli.store {
+            Some(arg) => arg.into(),
+            None => Config::load(vault_path).map(|c| c.store).unwrap_or_default(),
         };
+        timer.lap(&format!("loading {:?} store", backend));
+        let store = vault::load_with_backend(vault_path, backend)?;
         timer.lap("store ready");
         Ok(store)
     };
