@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 
 use kbase::{config, config::Config, embeddings, lsp, note, schema, skills, store, vault};
@@ -13,8 +14,44 @@ struct Cli {
     #[arg(short, long, global = true)]
     vault: Option<PathBuf>,
 
+    /// Bypass cached database, rebuild from files
+    #[arg(long, global = true)]
+    fresh: bool,
+
+    /// Show timing information for operations
+    #[arg(long, global = true)]
+    time: bool,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Timer helper for benchmarking
+struct Timer {
+    enabled: bool,
+    start: Instant,
+    last: Instant,
+}
+
+impl Timer {
+    fn new(enabled: bool) -> Self {
+        let now = Instant::now();
+        Self { enabled, start: now, last: now }
+    }
+
+    fn lap(&mut self, label: &str) {
+        if self.enabled {
+            let now = Instant::now();
+            eprintln!("[{:>8.2?}] {}", now.duration_since(self.last), label);
+            self.last = now;
+        }
+    }
+
+    fn total(&self) {
+        if self.enabled {
+            eprintln!("[{:>8.2?}] total", Instant::now().duration_since(self.start));
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -193,12 +230,26 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let mut timer = Timer::new(cli.time);
 
     let get_vault = || -> Result<PathBuf> {
         match &cli.vault {
             Some(p) => Ok(p.clone()),
             None => vault::find_vault_root(),
         }
+    };
+
+    // Load store respecting --fresh flag
+    let load_store = |vault_path: &PathBuf, timer: &mut Timer| -> Result<store::Store> {
+        let store = if cli.fresh {
+            timer.lap("loading fresh store");
+            vault::load_fresh(vault_path)?
+        } else {
+            timer.lap("loading cached store");
+            vault::load(vault_path)?
+        };
+        timer.lap("store ready");
+        Ok(store)
     };
 
     match cli.command {
@@ -214,24 +265,27 @@ fn main() -> Result<()> {
         }
         Commands::List { tag } => {
             let vault_path = get_vault()?;
-            let store = vault::load(&vault_path)?;
+            let store = load_store(&vault_path, &mut timer)?;
             let notes = store.list_notes(tag.as_deref(), false)?;
+            timer.lap("list_notes");
             for note in notes {
                 println!("{}", note);
             }
         }
         Commands::Backlinks { note } => {
             let vault_path = get_vault()?;
-            let store = vault::load(&vault_path)?;
+            let store = load_store(&vault_path, &mut timer)?;
             let backlinks = store.backlinks(&note)?;
+            timer.lap("backlinks");
             for link in backlinks {
                 println!("{}", link);
             }
         }
         Commands::Tags { tag, notes } => {
             let vault_path = get_vault()?;
-            let store = vault::load(&vault_path)?;
+            let store = load_store(&vault_path, &mut timer)?;
             let tree = store.list_tags(tag.as_deref(), notes)?;
+            timer.lap("list_tags");
             for line in tree {
                 println!("{}", line);
             }
@@ -239,7 +293,9 @@ fn main() -> Result<()> {
         Commands::Validate => {
             let vault_path = get_vault()?;
             let schema = schema::Schema::load(&vault_path)?;
+            timer.lap("load schema");
             let notes = vault::load_notes(&vault_path)?;
+            timer.lap("load notes");
 
             let mut total_violations = 0;
 
@@ -251,11 +307,13 @@ fn main() -> Result<()> {
                     total_violations += 1;
                 }
             }
+            timer.lap("schema validation");
 
             // Graph constraints (SPARQL)
             if !schema.constraints.is_empty() {
-                let store = vault::load(&vault_path)?;
+                let store = load_store(&vault_path, &mut timer)?;
                 let graph_violations = store.validate_constraints(&schema.constraints)?;
+                timer.lap("graph constraints");
                 for (_title, path, message) in &graph_violations {
                     println!("{}:constraint: {}", path, message);
                     total_violations += 1;
@@ -483,13 +541,14 @@ fn main() -> Result<()> {
         }
         Commands::Export { format, output } => {
             let vault_path = get_vault()?;
-            let store = vault::load(&vault_path)?;
+            let store = load_store(&vault_path, &mut timer)?;
 
             let content = match format.as_str() {
                 "dot" => store.export_dot()?,
                 "graphml" => store.export_graphml()?,
                 _ => anyhow::bail!("Unknown format: {}. Use 'dot' or 'graphml'", format),
             };
+            timer.lap("export");
 
             match output {
                 Some(path) => {
@@ -502,7 +561,8 @@ fn main() -> Result<()> {
         Commands::Overview { limit } => {
             let vault_path = get_vault()?;
             let notes = vault::load_notes(&vault_path)?;
-            let store = vault::load(&vault_path)?;
+            timer.lap("load notes");
+            let store = load_store(&vault_path, &mut timer)?;
 
             // Count notes
             println!("## Vault Overview\n");
@@ -798,7 +858,7 @@ fn main() -> Result<()> {
         }
         Commands::Query { sparql, file } => {
             let vault_path = get_vault()?;
-            let store = vault::load(&vault_path)?;
+            let store = load_store(&vault_path, &mut timer)?;
 
             // Get query from file or argument
             let query = match (sparql, file) {
@@ -816,6 +876,7 @@ fn main() -> Result<()> {
             }
 
             let results = store.query(&query)?;
+            timer.lap("query");
 
             if results.is_empty() {
                 println!("No results");
@@ -838,6 +899,7 @@ fn main() -> Result<()> {
         }
     }
 
+    timer.total();
     Ok(())
 }
 
