@@ -358,6 +358,38 @@ impl Store {
         Ok(results)
     }
 
+    /// Get all tag paths as plain strings (e.g., "domain", "domain/ai")
+    pub fn get_all_tag_paths(&self) -> Result<Vec<String>> {
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+
+            SELECT ?tag WHERE {{
+                ?tag kb:type kb:Tag .
+            }}
+            "#
+        );
+
+        let prefix = format!("{}tag/", KBASE_NS);
+        let mut tags = Vec::new();
+
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions {
+                let solution = solution?;
+                if let Some(Term::NamedNode(tag_node)) = solution.get("tag") {
+                    if let Some(tag) = tag_node.as_str().strip_prefix(&prefix) {
+                        if !tag.is_empty() {
+                            tags.push(tag.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        tags.sort();
+        Ok(tags)
+    }
+
     /// List all tags as a tree structure, optionally filtered and with notes
     pub fn list_tags(&self, filter: Option<&str>, show_notes: bool) -> Result<Vec<String>> {
         // Query all tags and their parents

@@ -100,6 +100,30 @@ enum Commands {
         #[arg(short, long, default_value = "5")]
         limit: usize,
     },
+    /// Organize notes into directories based on tag tree
+    ///
+    /// Moves notes into a directory structure matching their tag hierarchy.
+    /// Fails if conflicts are detected (user must resolve manually).
+    Organize {
+        /// Tag tree prefix to organize by (e.g., "domain" for domain/*)
+        #[arg(long)]
+        tree: Option<String>,
+        /// Keep flat structure (no directories, just move to vault root)
+        #[arg(long)]
+        flat: bool,
+        /// Create symlinks for notes with multiple tag paths
+        #[arg(long)]
+        symlinks: bool,
+        /// Preview changes without modifying files
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Clean orphan tags (tags in graph with no notes)
+    CleanTags {
+        /// Preview without deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Convert links between wiki and markdown syntax
     ///
     /// Wiki:     [[Note Title]] or [[Note Title|alias]]
@@ -538,6 +562,197 @@ fn main() -> Result<()> {
                 }
                 if orphans.len() > limit {
                     println!("- ... and {} more", orphans.len() - limit);
+                }
+            }
+        }
+        Commands::Organize { tree, flat, symlinks, dry_run } => {
+            let vault_path = get_vault()?;
+            let notes = vault::load_notes(&vault_path)?;
+
+            // Build a map of note paths to their target locations
+            let mut moves: Vec<(PathBuf, PathBuf, String)> = Vec::new(); // (from, to, title)
+            let mut conflicts: Vec<String> = Vec::new();
+            let mut multi_path: Vec<(String, Vec<String>)> = Vec::new(); // (title, [tags])
+
+            for n in &notes {
+                // Get tags matching the tree filter
+                let matching_tags: Vec<&String> = if let Some(ref tree_prefix) = tree {
+                    n.tags.iter().filter(|t| t.starts_with(tree_prefix)).collect()
+                } else {
+                    n.tags.iter().collect()
+                };
+
+                if matching_tags.is_empty() {
+                    continue; // Note doesn't match tree filter
+                }
+
+                // Check for multi-path within the filtered tree
+                if matching_tags.len() > 1 {
+                    multi_path.push((
+                        n.title.clone(),
+                        matching_tags.iter().map(|t| t.to_string()).collect(),
+                    ));
+                }
+
+                // Use first matching tag as primary path
+                let primary_tag = matching_tags[0];
+
+                let target_path = if flat {
+                    // Flat: keep in vault root
+                    let filename = n.path.file_name().unwrap();
+                    vault_path.join(filename)
+                } else {
+                    // Tree: create directory structure from tag
+                    let tag_path: PathBuf = primary_tag.split('/').collect();
+                    let filename = n.path.file_name().unwrap();
+                    vault_path.join(tag_path).join(filename)
+                };
+
+                if target_path != n.path {
+                    moves.push((n.path.clone(), target_path, n.title.clone()));
+                }
+            }
+
+            // Check for filename conflicts (multiple notes targeting same path)
+            let mut target_counts: std::collections::HashMap<PathBuf, Vec<String>> =
+                std::collections::HashMap::new();
+            for (_, target, title) in &moves {
+                target_counts.entry(target.clone()).or_default().push(title.clone());
+            }
+            for (target, titles) in &target_counts {
+                if titles.len() > 1 {
+                    conflicts.push(format!(
+                        "Multiple notes target {}: {}",
+                        target.display(),
+                        titles.join(", ")
+                    ));
+                }
+            }
+
+            // Report multi-path notes
+            if !multi_path.is_empty() {
+                println!("## Multi-path notes\n");
+                println!("These notes have multiple tags in the selected tree:");
+                for (title, tags) in &multi_path {
+                    println!("  {} -> {} (using first)", title, tags.join(", "));
+                }
+                if !symlinks {
+                    println!("\nUse --symlinks to create links at secondary locations.\n");
+                }
+            }
+
+            // Report conflicts and abort
+            if !conflicts.is_empty() {
+                println!("## Conflicts detected\n");
+                for c in &conflicts {
+                    println!("  {}", c);
+                }
+                println!("\nResolve conflicts before organizing (rename notes or adjust tags).");
+                anyhow::bail!("Cannot organize: {} conflicts found", conflicts.len());
+            }
+
+            // Report or execute moves
+            if moves.is_empty() {
+                println!("No files to move.");
+            } else {
+                println!("## {}\n", if dry_run { "Would move" } else { "Moving" });
+
+                for (from, to, _title) in &moves {
+                    let from_rel = from.strip_prefix(&vault_path).unwrap_or(from);
+                    let to_rel = to.strip_prefix(&vault_path).unwrap_or(to);
+                    println!("  {} -> {}", from_rel.display(), to_rel.display());
+
+                    if !dry_run {
+                        // Create target directory
+                        if let Some(parent) = to.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        // Move file
+                        std::fs::rename(from, to)?;
+                    }
+                }
+
+                // Create symlinks for multi-path notes if requested
+                if symlinks && !multi_path.is_empty() {
+                    println!("\n## {}\n", if dry_run { "Would create symlinks" } else { "Creating symlinks" });
+                    for (title, tags) in &multi_path {
+                        // Find the note that was moved
+                        if let Some(n) = notes.iter().find(|n| &n.title == title) {
+                            let primary_tag = &tags[0];
+                            for secondary_tag in &tags[1..] {
+                                let symlink_dir: PathBuf = secondary_tag.split('/').collect();
+                                let symlink_path = vault_path.join(symlink_dir).join(n.path.file_name().unwrap());
+
+                                let primary_dir: PathBuf = primary_tag.split('/').collect();
+                                let target = vault_path.join(primary_dir).join(n.path.file_name().unwrap());
+
+                                println!("  {} -> {}", symlink_path.display(), target.display());
+
+                                if !dry_run {
+                                    if let Some(parent) = symlink_path.parent() {
+                                        std::fs::create_dir_all(parent)?;
+                                    }
+                                    #[cfg(unix)]
+                                    std::os::unix::fs::symlink(&target, &symlink_path)?;
+                                    #[cfg(windows)]
+                                    std::os::windows::fs::symlink_file(&target, &symlink_path)?;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // TODO: Update links in all notes to reflect new paths
+
+                println!("\n{} files {}", moves.len(), if dry_run { "would be moved" } else { "moved" });
+            }
+        }
+        Commands::CleanTags { dry_run } => {
+            let vault_path = get_vault()?;
+            let notes = vault::load_notes(&vault_path)?;
+            let store = vault::load(&vault_path)?;
+
+            // Get all tag paths from the graph (raw paths, not formatted tree)
+            let all_tags = store.get_all_tag_paths()?;
+
+            // Get tags actually used by notes
+            let mut used_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for n in &notes {
+                for tag in &n.tags {
+                    // Add the tag and all its ancestors
+                    let parts: Vec<&str> = tag.split('/').collect();
+                    for i in 1..=parts.len() {
+                        used_tags.insert(parts[..i].join("/"));
+                    }
+                }
+            }
+
+            // Find orphan tags
+            let orphan_tags: Vec<_> = all_tags
+                .iter()
+                .filter(|t| !used_tags.contains(*t))
+                .collect();
+
+            if orphan_tags.is_empty() {
+                println!("No orphan tags found.");
+            } else {
+                println!("## Orphan tags{}\n", if dry_run { " (dry run)" } else { "" });
+                for tag in &orphan_tags {
+                    println!("  {}", tag);
+                }
+
+                if !dry_run {
+                    // Rebuild the graph without orphan tags (by reloading from notes)
+                    println!("\nRebuilding graph...");
+                    // The simplest way is to delete and recreate the graph store
+                    let graph_path = vault_path.join(".kbase").join("graph.db");
+                    if graph_path.exists() {
+                        std::fs::remove_dir_all(&graph_path)?;
+                    }
+                    vault::load(&vault_path)?; // This rebuilds the graph
+                    println!("Removed {} orphan tags.", orphan_tags.len());
+                } else {
+                    println!("\n{} orphan tags would be removed.", orphan_tags.len());
                 }
             }
         }

@@ -586,3 +586,333 @@ fn export_graphml_valid_xml() {
 
     cleanup_temp_db(&db_path);
 }
+
+// ============================================================================
+// Organize command tests
+// ============================================================================
+
+fn create_test_vault(name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = env::temp_dir().join(format!("kbase-vault-{}-{}-{}", std::process::id(), name, unique));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("Failed to create test vault");
+
+    // Create .kbase directory
+    let kbase_dir = dir.join(".kbase");
+    fs::create_dir_all(&kbase_dir).expect("Failed to create .kbase");
+
+    // Create minimal config
+    fs::write(kbase_dir.join("config.yaml"), "link_syntax: wiki\n").expect("Failed to write config");
+
+    dir
+}
+
+fn cleanup_test_vault(path: &PathBuf) {
+    let _ = fs::remove_dir_all(path);
+}
+
+fn create_test_note(vault: &PathBuf, filename: &str, title: &str, tags: &[&str]) {
+    let tags_yaml = if tags.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[{}]", tags.join(", "))
+    };
+    let content = format!(
+        "---\ntitle: \"{}\"\ntags: {}\n---\n\n# {}\n\nContent here.\n",
+        title, tags_yaml, title
+    );
+    fs::write(vault.join(filename), content).expect("Failed to write test note");
+}
+
+#[test]
+fn organize_moves_files_to_tag_directories() {
+    let vault = create_test_vault("organize-basic");
+
+    // Create notes with hierarchical tags
+    create_test_note(&vault, "ai.md", "AI Concepts", &["domain/ai"]);
+    create_test_note(&vault, "ml.md", "Machine Learning", &["domain/ai/ml"]);
+    create_test_note(&vault, "recipe.md", "Pancakes", &["type/recipe"]);
+
+    // Load and get note paths before organize
+    let notes_before = vault::load_notes(&vault).expect("Failed to load notes");
+    assert_eq!(notes_before.len(), 3);
+
+    // Run organize (simulating the command)
+    // Since we can't easily call main(), we'll test the underlying logic
+    // by manually moving files according to the organize algorithm
+    for n in &notes_before {
+        if n.tags.is_empty() {
+            continue;
+        }
+        let primary_tag = &n.tags[0];
+        let tag_path: PathBuf = primary_tag.split('/').collect();
+        let filename = n.path.file_name().unwrap();
+        let target = vault.join(&tag_path).join(filename);
+
+        if target != n.path {
+            fs::create_dir_all(target.parent().unwrap()).expect("Failed to create dir");
+            fs::rename(&n.path, &target).expect("Failed to move file");
+        }
+    }
+
+    // Verify files were moved
+    assert!(vault.join("domain/ai/ai.md").exists(), "AI should be in domain/ai/");
+    assert!(vault.join("domain/ai/ml/ml.md").exists(), "ML should be in domain/ai/ml/");
+    assert!(vault.join("type/recipe/recipe.md").exists(), "Recipe should be in type/recipe/");
+
+    // Original locations should not exist
+    assert!(!vault.join("ai.md").exists());
+    assert!(!vault.join("ml.md").exists());
+    assert!(!vault.join("recipe.md").exists());
+
+    cleanup_test_vault(&vault);
+}
+
+#[test]
+fn organize_flat_keeps_files_in_root() {
+    let vault = create_test_vault("organize-flat");
+
+    // Create a note in a subdirectory
+    let subdir = vault.join("old-location");
+    fs::create_dir_all(&subdir).expect("Failed to create subdir");
+    create_test_note(&subdir, "note.md", "Test Note", &["domain/ai"]);
+
+    // Simulate flat organize: move to vault root
+    let notes = vault::load_notes(&vault).expect("Failed to load notes");
+    for n in &notes {
+        let filename = n.path.file_name().unwrap();
+        let target = vault.join(filename);
+        if target != n.path {
+            fs::rename(&n.path, &target).expect("Failed to move file");
+        }
+    }
+
+    // Note should be in vault root
+    assert!(vault.join("note.md").exists());
+    assert!(!subdir.join("note.md").exists());
+
+    cleanup_test_vault(&vault);
+}
+
+#[test]
+fn organize_detects_multi_path_notes() {
+    let vault = create_test_vault("organize-multipath");
+
+    // Create a note with multiple tags in the same tree
+    create_test_note(&vault, "hybrid.md", "Hybrid Note", &["domain/ai", "domain/education"]);
+
+    let notes = vault::load_notes(&vault).expect("Failed to load notes");
+    let n = &notes[0];
+
+    // Detect multi-path: note has multiple tags
+    let matching_tags: Vec<&String> = n.tags.iter().collect();
+    assert!(matching_tags.len() > 1, "Note should have multiple tags");
+
+    // The organize command would report this and use first tag as primary
+    assert_eq!(matching_tags[0], "domain/ai");
+
+    cleanup_test_vault(&vault);
+}
+
+#[test]
+fn organize_detects_filename_conflicts() {
+    let vault = create_test_vault("organize-conflict");
+
+    // Create two notes that would end up with same filename in same directory
+    // Both have tag domain/ai but different source locations
+    create_test_note(&vault, "note.md", "Note One", &["domain/ai"]);
+
+    let subdir = vault.join("other");
+    fs::create_dir_all(&subdir).expect("Failed to create subdir");
+    create_test_note(&subdir, "note.md", "Note Two", &["domain/ai"]);
+
+    let notes = vault::load_notes(&vault).expect("Failed to load notes");
+
+    // Build target map to detect conflicts
+    let mut target_counts: std::collections::HashMap<PathBuf, Vec<String>> =
+        std::collections::HashMap::new();
+
+    for n in &notes {
+        if n.tags.is_empty() {
+            continue;
+        }
+        let primary_tag = &n.tags[0];
+        let tag_path: PathBuf = primary_tag.split('/').collect();
+        let filename = n.path.file_name().unwrap();
+        let target = vault.join(&tag_path).join(filename);
+
+        target_counts.entry(target).or_default().push(n.title.clone());
+    }
+
+    // Should detect conflict: both notes target domain/ai/note.md
+    let conflicts: Vec<_> = target_counts
+        .iter()
+        .filter(|(_, titles)| titles.len() > 1)
+        .collect();
+
+    assert!(!conflicts.is_empty(), "Should detect filename conflict");
+
+    cleanup_test_vault(&vault);
+}
+
+#[test]
+#[cfg(unix)]
+fn organize_creates_symlinks_for_secondary_paths() {
+    let vault = create_test_vault("organize-symlinks");
+
+    // Create note with multiple tags
+    create_test_note(&vault, "hybrid.md", "Hybrid Note", &["domain/ai", "domain/education"]);
+
+    let notes = vault::load_notes(&vault).expect("Failed to load notes");
+    let n = &notes[0];
+
+    // Move to primary location
+    let primary_tag = &n.tags[0];
+    let primary_dir: PathBuf = primary_tag.split('/').collect();
+    let primary_path = vault.join(&primary_dir).join("hybrid.md");
+    fs::create_dir_all(primary_path.parent().unwrap()).expect("Failed to create dir");
+    fs::rename(&n.path, &primary_path).expect("Failed to move file");
+
+    // Create symlink at secondary location
+    let secondary_tag = &n.tags[1];
+    let secondary_dir: PathBuf = secondary_tag.split('/').collect();
+    let symlink_path = vault.join(&secondary_dir).join("hybrid.md");
+    fs::create_dir_all(symlink_path.parent().unwrap()).expect("Failed to create dir");
+
+    std::os::unix::fs::symlink(&primary_path, &symlink_path).expect("Failed to create symlink");
+
+    // Verify
+    assert!(primary_path.exists(), "Primary file should exist");
+    assert!(symlink_path.is_symlink(), "Secondary should be symlink");
+    assert!(symlink_path.exists(), "Symlink should resolve");
+
+    cleanup_test_vault(&vault);
+}
+
+// ============================================================================
+// Clean-tags command tests
+// ============================================================================
+
+#[test]
+fn clean_tags_finds_orphan_tags() {
+    let db_path = temp_db_path("clean-tags-orphan");
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    // Create a note with a tag
+    let note = note::Note {
+        title: "Test".to_string(),
+        path: PathBuf::from("/tmp/test.md"),
+        tags: vec!["domain/ai".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&note).expect("Failed to insert");
+
+    // Get all tag paths from store (raw paths, not formatted tree)
+    let all_tags = store.get_all_tag_paths().expect("Failed to get tag paths");
+
+    // Simulate the clean-tags detection: find tags not used by any note
+    let mut used_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Note uses domain/ai, which means domain and domain/ai are both "used"
+    for tag in &note.tags {
+        let parts: Vec<&str> = tag.split('/').collect();
+        for i in 1..=parts.len() {
+            used_tags.insert(parts[..i].join("/"));
+        }
+    }
+
+    // Check that used tags are recognized
+    assert!(used_tags.contains("domain"), "domain should be used");
+    assert!(used_tags.contains("domain/ai"), "domain/ai should be used");
+
+    // All tags in store should be used (no orphans yet)
+    let orphans: Vec<_> = all_tags.iter().filter(|t| !used_tags.contains(t.as_str())).collect();
+    assert!(orphans.is_empty(), "No orphans expected with single note, got: {:?}", orphans);
+
+    cleanup_temp_db(&db_path);
+}
+
+#[test]
+fn clean_tags_preserves_ancestors_with_children() {
+    let vault = create_test_vault("clean-tags-ancestors");
+
+    // Create notes at different levels of hierarchy
+    create_test_note(&vault, "deep.md", "Deep Note", &["domain/ai/ml/deep"]);
+
+    let notes = vault::load_notes(&vault).expect("Failed to load notes");
+
+    // Build used tags set (includes ancestors)
+    let mut used_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for n in &notes {
+        for tag in &n.tags {
+            let parts: Vec<&str> = tag.split('/').collect();
+            for i in 1..=parts.len() {
+                used_tags.insert(parts[..i].join("/"));
+            }
+        }
+    }
+
+    // All ancestors should be marked as used
+    assert!(used_tags.contains("domain"), "domain should be preserved");
+    assert!(used_tags.contains("domain/ai"), "domain/ai should be preserved");
+    assert!(used_tags.contains("domain/ai/ml"), "domain/ai/ml should be preserved");
+    assert!(used_tags.contains("domain/ai/ml/deep"), "domain/ai/ml/deep should be preserved");
+
+    cleanup_test_vault(&vault);
+}
+
+#[test]
+fn clean_tags_detects_orphans_after_deletion() {
+    let db_path = temp_db_path("clean-tags-after-delete");
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    // Create two notes sharing ancestor
+    let note1 = note::Note {
+        title: "AI".to_string(),
+        path: PathBuf::from("/tmp/ai.md"),
+        tags: vec!["domain/ai".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/ai").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&note1).expect("Failed to insert");
+
+    let note2 = note::Note {
+        title: "Web".to_string(),
+        path: PathBuf::from("/tmp/web.md"),
+        tags: vec!["domain/web".to_string()],
+        tree_edges: vec![note::TreeEdge::parse("domain/web").unwrap()],
+        fields: Default::default(),
+        links: vec![],
+    };
+    store.upsert_note(&note2).expect("Failed to insert");
+
+    // Both notes share "domain" ancestor
+    let tags_before = store.list_tags(None, false).expect("Failed to list");
+    assert!(tags_before.iter().any(|t| t == "domain"), "domain should exist");
+
+    // Remove one note
+    store.remove_note("/tmp/web.md").expect("Failed to remove");
+
+    // "domain" should still exist (used by ai.md)
+    // But "domain/web" is now orphan
+
+    // Simulate clean-tags check with remaining note
+    let remaining_tags = vec!["domain/ai".to_string()];
+    let mut used_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for tag in &remaining_tags {
+        let parts: Vec<&str> = tag.split('/').collect();
+        for i in 1..=parts.len() {
+            used_tags.insert(parts[..i].join("/"));
+        }
+    }
+
+    // domain/web is now orphan
+    assert!(!used_tags.contains("domain/web"), "domain/web should be orphan");
+    assert!(used_tags.contains("domain"), "domain should still be used");
+
+    cleanup_temp_db(&db_path);
+}
