@@ -280,7 +280,7 @@ fn extract_links(body: &str, syntax: LinkSyntax, body_start_line: u32) -> Vec<Li
 }
 
 /// Convert title to filename-safe slug
-fn slugify(s: &str) -> String {
+pub fn slugify(s: &str) -> String {
     s.to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })

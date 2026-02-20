@@ -100,6 +100,17 @@ enum Commands {
         #[arg(short, long, default_value = "5")]
         limit: usize,
     },
+    /// Convert links between wiki and markdown syntax
+    ///
+    /// Wiki:     [[Note Title]] or [[Note Title|alias]]
+    /// Markdown: [Note Title](note-title.md) or [alias](note-title.md)
+    Convert {
+        /// Target syntax: "wiki" or "markdown"
+        to: String,
+        /// Dry run - show changes without modifying files
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Run a SPARQL query on the knowledge graph
     ///
     /// Use "schema" as query to see full schema documentation.
@@ -530,6 +541,49 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Convert { to, dry_run } => {
+            let vault_path = get_vault()?;
+            let notes = vault::load_notes(&vault_path)?;
+
+            let to_markdown = match to.to_lowercase().as_str() {
+                "markdown" | "md" => true,
+                "wiki" => false,
+                _ => anyhow::bail!("Unknown target syntax: {}. Use 'wiki' or 'markdown'", to),
+            };
+
+            let mut total_changes = 0;
+
+            for n in &notes {
+                let content = std::fs::read_to_string(&n.path)?;
+                let new_content = if to_markdown {
+                    convert_wiki_to_markdown(&content, &notes)
+                } else {
+                    convert_markdown_to_wiki(&content)
+                };
+
+                if content != new_content {
+                    total_changes += 1;
+                    if dry_run {
+                        println!("Would modify: {}", n.path.display());
+                        // Show diff-like output
+                        for (i, (old, new)) in content.lines().zip(new_content.lines()).enumerate() {
+                            if old != new {
+                                println!("  L{}: {} -> {}", i + 1, old.trim(), new.trim());
+                            }
+                        }
+                    } else {
+                        std::fs::write(&n.path, &new_content)?;
+                        println!("Modified: {}", n.path.display());
+                    }
+                }
+            }
+
+            if dry_run {
+                println!("\n{} files would be modified", total_changes);
+            } else {
+                println!("\n{} files modified", total_changes);
+            }
+        }
         Commands::Query { sparql, file } => {
             let vault_path = get_vault()?;
             let store = vault::load(&vault_path)?;
@@ -574,3 +628,124 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
+/// Convert wiki links [[Title]] to markdown [Title](slug.md)
+fn convert_wiki_to_markdown(content: &str, notes: &[note::Note]) -> String {
+    use regex::Regex;
+
+    // Build title -> slug map
+    let title_to_slug: std::collections::HashMap<String, String> = notes
+        .iter()
+        .map(|n| {
+            let slug = n.path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&n.title)
+                .to_string();
+            (n.title.to_lowercase(), slug)
+        })
+        .collect();
+
+    // Match [[Title]] or [[Title|Alias]]
+    let re = Regex::new(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").unwrap();
+
+    re.replace_all(content, |caps: &regex::Captures| {
+        let title = &caps[1];
+        let alias = caps.get(2).map(|m| m.as_str());
+        let display = alias.unwrap_or(title);
+
+        // Find slug for this title, or generate from title if note doesn't exist
+        let slug = title_to_slug
+            .get(&title.to_lowercase())
+            .cloned()
+            .unwrap_or_else(|| note::slugify(title));
+
+        format!("[{}]({}.md)", display, slug)
+    })
+    .to_string()
+}
+
+/// Convert markdown links [Text](slug.md) to wiki [[Title]]
+fn convert_markdown_to_wiki(content: &str) -> String {
+    use regex::Regex;
+
+    // Match [Text](path.md) - only .md files, not http links
+    let re = Regex::new(r"\[([^\]]+)\]\(([^)]+\.md)\)").unwrap();
+
+    re.replace_all(content, |caps: &regex::Captures| {
+        let text = &caps[1];
+        let path = &caps[2];
+
+        // Extract title from path (remove .md, convert dashes to spaces, title case)
+        let slug = path.trim_end_matches(".md");
+        let title = slug
+            .split('-')
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().chain(chars).collect(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        // If display text differs from title, use alias syntax
+        if text != title {
+            format!("[[{}|{}]]", title, text)
+        } else {
+            format!("[[{}]]", title)
+        }
+    })
+    .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_wiki_to_markdown_basic() {
+        let content = "See [[My Note]] for details.";
+        let notes = vec![];  // Empty - will generate slug from title
+        let result = convert_wiki_to_markdown(content, &notes);
+        assert_eq!(result, "See [My Note](my-note.md) for details.");
+    }
+
+    #[test]
+    fn convert_wiki_to_markdown_with_alias() {
+        let content = "See [[My Note|this note]] for details.";
+        let notes = vec![];
+        let result = convert_wiki_to_markdown(content, &notes);
+        assert_eq!(result, "See [this note](my-note.md) for details.");
+    }
+
+    #[test]
+    fn convert_markdown_to_wiki_basic() {
+        let content = "See [My Note](my-note.md) for details.";
+        let result = convert_markdown_to_wiki(content);
+        assert_eq!(result, "See [[My Note]] for details.");
+    }
+
+    #[test]
+    fn convert_markdown_to_wiki_with_alias() {
+        let content = "See [this note](my-note.md) for details.";
+        let result = convert_markdown_to_wiki(content);
+        assert_eq!(result, "See [[My Note|this note]] for details.");
+    }
+
+    #[test]
+    fn convert_preserves_non_links() {
+        let content = "Regular text with no links.";
+        let notes = vec![];
+        assert_eq!(convert_wiki_to_markdown(content, &notes), content);
+        assert_eq!(convert_markdown_to_wiki(content), content);
+    }
+
+    #[test]
+    fn convert_ignores_http_links() {
+        let content = "See [website](https://example.com) for details.";
+        let result = convert_markdown_to_wiki(content);
+        assert_eq!(result, content);  // Should not convert http links
+    }
+}
+

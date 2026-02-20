@@ -16,6 +16,20 @@ use crate::note::{self, Link, Note};
 use crate::store::Store;
 use crate::vault;
 
+/// Convert a slug (my-note-title) to title case (My Note Title)
+fn slug_to_title(slug: &str) -> String {
+    slug.split('-')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// LSP backend for kbase.
 ///
 /// Fields use `RwLock` for interior mutability because `LanguageServer` trait methods
@@ -334,25 +348,55 @@ impl KbaseLanguageServer {
             .collect()
     }
 
-    /// Extract wiki link at position (returns the link target if cursor is on a [[link]])
+    /// Extract link at position (wiki [[link]] or markdown [text](path.md))
     fn get_link_at_position(&self, content: &str, position: Position) -> Option<String> {
         let lines: Vec<&str> = content.lines().collect();
         let line = lines.get(position.line as usize)?;
         let col = position.character as usize;
 
-        // Find [[ before cursor and ]] after cursor
         let before = &line[..col.min(line.len())];
         let after = &line[col.min(line.len())..];
 
-        let start = before.rfind("[[")?;
-        let end = after.find("]]")?;
+        // Try wiki link first: [[target]] or [[target|alias]]
+        if let (Some(start), Some(end)) = (before.rfind("[["), after.find("]]")) {
+            let link_content = &line[start + 2..col + end];
+            let target = link_content.split('|').next()?;
+            return Some(target.to_string());
+        }
 
-        // Extract link target
-        let link_content = &line[start + 2..col + end];
+        // Try markdown link: [text](path.md)
+        // Find ]( before cursor or [ before cursor with ]( after
+        if let Some(paren_start) = before.rfind("](") {
+            // Cursor is in the path part
+            if let Some(paren_end) = after.find(')') {
+                let path = &line[paren_start + 2..col + paren_end];
+                if path.ends_with(".md") {
+                    // Convert slug to title
+                    let slug = path.trim_end_matches(".md");
+                    let title = slug_to_title(slug);
+                    return Some(title);
+                }
+            }
+        } else if let Some(_bracket_start) = before.rfind('[') {
+            // Cursor might be in the text part, find ](...)
+            if let Some(link_end) = after.find(')') {
+                let rest = &line[col..col + link_end + 1];
+                if let Some(paren_pos) = rest.find("](") {
+                    let path_start = col + paren_pos + 2;
+                    let path_end = col + link_end;
+                    if path_end > path_start {
+                        let path = &line[path_start..path_end];
+                        if path.ends_with(".md") {
+                            let slug = path.trim_end_matches(".md");
+                            let title = slug_to_title(slug);
+                            return Some(title);
+                        }
+                    }
+                }
+            }
+        }
 
-        // Handle [[target|alias]] format
-        let target = link_content.split('|').next()?;
-        Some(target.to_string())
+        None
     }
 
     /// Extract tag path at cursor position in frontmatter
