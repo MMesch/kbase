@@ -22,6 +22,13 @@ pub struct EmbeddingsConfig {
     pub backend: EmbeddingBackend,
     #[serde(default)]
     pub chunk_level: String, // "none", "#", "##", "###", "paragraph"
+    /// Include note title and parent headers in chunk text for better context (default: true)
+    #[serde(default = "default_include_context")]
+    pub include_context: bool,
+}
+
+fn default_include_context() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]

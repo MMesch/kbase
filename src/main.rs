@@ -212,10 +212,12 @@ fn main() -> Result<()> {
                 }
             };
 
+            let include_context = config.embeddings.include_context;
+
             // Embed all notes (using cache)
             for n in &notes {
                 let content = std::fs::read_to_string(&n.path)?;
-                let chunks = embeddings::split_into_chunks(&content, chunk_level);
+                let chunks = embeddings::split_into_chunks(&content, chunk_level, Some(&n.title), include_context);
 
                 let texts: Vec<&str> = chunks.iter().map(|(_, text, _)| text.as_str()).collect();
                 let vectors = cache.get_or_compute_batch(&texts, &mut *backend)?;
@@ -288,10 +290,12 @@ fn main() -> Result<()> {
                 }
             };
 
+            let include_context = config.embeddings.include_context;
+
             // Embed all notes (using cache)
             for n in &notes {
                 let content = std::fs::read_to_string(&n.path)?;
-                let chunks = embeddings::split_into_chunks(&content, chunk_level);
+                let chunks = embeddings::split_into_chunks(&content, chunk_level, Some(&n.title), include_context);
 
                 let texts: Vec<&str> = chunks.iter().map(|(_, text, _)| text.as_str()).collect();
                 let vectors = cache.get_or_compute_batch(&texts, &mut *backend)?;

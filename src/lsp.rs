@@ -224,6 +224,7 @@ impl KbaseLanguageServer {
         let vault_path = vault_path.ok_or_else(|| anyhow::anyhow!("No vault path"))?;
         let config = Config::load(&vault_path)?;
         let chunk_level = embeddings::ChunkLevel::from_str(&config.embeddings.chunk_level);
+        let include_context = config.embeddings.include_context;
 
         let notes = self.notes.read().unwrap();
         let mut store = EmbeddingStore::new();
@@ -239,7 +240,7 @@ impl KbaseLanguageServer {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            let chunks = embeddings::split_into_chunks(&content, chunk_level);
+            let chunks = embeddings::split_into_chunks(&content, chunk_level, Some(&note.title), include_context);
 
             let texts: Vec<&str> = chunks.iter().map(|(_, text, _)| text.as_str()).collect();
             let vectors = cache.get_or_compute_batch(&texts, backend.as_mut())?;

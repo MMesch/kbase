@@ -503,19 +503,33 @@ impl ChunkLevel {
 
 /// Split markdown content into chunks based on level
 /// Returns (header_path, text, line_number) for each chunk
-pub fn split_into_chunks(content: &str, level: ChunkLevel) -> Vec<(Vec<String>, String, u32)> {
+///
+/// If `include_context` is true, prepends note title and parent headers to each chunk
+/// for better embedding context.
+pub fn split_into_chunks(
+    content: &str,
+    level: ChunkLevel,
+    title: Option<&str>,
+    include_context: bool,
+) -> Vec<(Vec<String>, String, u32)> {
     match level {
         ChunkLevel::None => vec![(vec![], content.to_string(), 0)],
-        ChunkLevel::H1 => split_by_header(content, 1),
-        ChunkLevel::H2 => split_by_header(content, 2),
-        ChunkLevel::H3 => split_by_header(content, 3),
-        ChunkLevel::Paragraph => split_by_paragraph(content),
+        ChunkLevel::H1 => split_by_header(content, 1, title, include_context),
+        ChunkLevel::H2 => split_by_header(content, 2, title, include_context),
+        ChunkLevel::H3 => split_by_header(content, 3, title, include_context),
+        ChunkLevel::Paragraph => split_by_paragraph(content, title, include_context),
     }
 }
 
-fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String, u32)> {
+fn split_by_header(
+    content: &str,
+    level: usize,
+    title: Option<&str>,
+    include_context: bool,
+) -> Vec<(Vec<String>, String, u32)> {
     let mut chunks = Vec::new();
-    let mut current_headers: Vec<String> = Vec::new();
+    // Store (header_level, header_text) for building context
+    let mut current_headers: Vec<(usize, String)> = Vec::new();
     let mut current_text = String::new();
     let mut current_start_line: u32 = 0;
     let mut line_number: u32 = 0;
@@ -530,18 +544,19 @@ fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String, u32
             if header_level <= level {
                 // Save previous chunk if non-empty
                 if !current_text.trim().is_empty() {
-                    chunks.push((current_headers.clone(), current_text.trim().to_string(), current_start_line));
+                    let header_path: Vec<String> = current_headers.iter().map(|(_, t)| t.clone()).collect();
+                    let final_text = build_chunk_text(title, &current_headers, &current_text, include_context);
+                    chunks.push((header_path, final_text, current_start_line));
                 }
 
-                // Update header path
+                // Update header path - keep headers at levels above current
                 let header_text = trimmed[header_level..].trim().to_string();
+                current_headers.retain(|(lvl, _)| *lvl < header_level);
+                current_headers.push((header_level, header_text));
 
-                // Truncate headers to current level and add new one
-                current_headers.truncate(header_level.saturating_sub(1));
-                current_headers.push(header_text.clone());
-
-                // Start new chunk with header included in text for better embeddings
-                current_text = format!("{}\n", header_text);
+                // Start new chunk with current header in markdown format
+                let hashes = "#".repeat(header_level);
+                current_text = format!("{} {}\n", hashes, current_headers.last().map(|(_, t)| t.as_str()).unwrap_or(""));
                 current_start_line = line_number;
                 line_number += 1;
                 continue;
@@ -555,25 +570,77 @@ fn split_by_header(content: &str, level: usize) -> Vec<(Vec<String>, String, u32
 
     // Don't forget the last chunk
     if !current_text.trim().is_empty() {
-        chunks.push((current_headers, current_text.trim().to_string(), current_start_line));
+        let header_path: Vec<String> = current_headers.iter().map(|(_, t)| t.clone()).collect();
+        let final_text = build_chunk_text(title, &current_headers, &current_text, include_context);
+        chunks.push((header_path, final_text, current_start_line));
     }
 
     // If no chunks were created, return the whole content
     if chunks.is_empty() {
-        chunks.push((vec![], content.to_string(), 0));
+        let text = if include_context {
+            if let Some(t) = title {
+                format!("# {}\n\n{}", t, content)
+            } else {
+                content.to_string()
+            }
+        } else {
+            content.to_string()
+        };
+        chunks.push((vec![], text, 0));
     }
 
     chunks
 }
 
-fn split_by_paragraph(content: &str) -> Vec<(Vec<String>, String, u32)> {
+/// Build chunk text with optional context (title + parent headers)
+fn build_chunk_text(
+    title: Option<&str>,
+    headers: &[(usize, String)],
+    chunk_text: &str,
+    include_context: bool,
+) -> String {
+    if !include_context {
+        return chunk_text.trim().to_string();
+    }
+
+    let mut result = String::new();
+
+    // Add title as H1 if provided
+    if let Some(t) = title {
+        result.push_str(&format!("# {}\n\n", t));
+    }
+
+    // Add parent headers (all except the last one, which is already in chunk_text)
+    if headers.len() > 1 {
+        for (level, text) in &headers[..headers.len() - 1] {
+            let hashes = "#".repeat(*level);
+            result.push_str(&format!("{} {}\n\n", hashes, text));
+        }
+    }
+
+    result.push_str(chunk_text.trim());
+    result
+}
+
+fn split_by_paragraph(
+    content: &str,
+    title: Option<&str>,
+    include_context: bool,
+) -> Vec<(Vec<String>, String, u32)> {
     let mut chunks = Vec::new();
     let mut current_line: u32 = 0;
+
+    let title_prefix = if include_context {
+        title.map(|t| format!("# {}\n\n", t)).unwrap_or_default()
+    } else {
+        String::new()
+    };
 
     for part in content.split("\n\n") {
         let trimmed = part.trim();
         if !trimmed.is_empty() {
-            chunks.push((vec![], trimmed.to_string(), current_line));
+            let text = format!("{}{}", title_prefix, trimmed);
+            chunks.push((vec![], text, current_line));
         }
         // Count lines in this part plus the blank line separator
         current_line += part.matches('\n').count() as u32 + 2;
@@ -603,7 +670,7 @@ mod tests {
     #[test]
     fn split_by_h2() {
         let content = "# Title\n\nIntro\n\n## Section 1\n\nContent 1\n\n## Section 2\n\nContent 2";
-        let chunks = split_by_header(content, 2);
+        let chunks = split_by_header(content, 2, None, false);
         assert_eq!(chunks.len(), 3);
         // Check line numbers
         assert_eq!(chunks[0].2, 0); // # Title at line 0
@@ -614,8 +681,30 @@ mod tests {
     #[test]
     fn split_by_paragraph_basic() {
         let content = "Para 1\n\nPara 2\n\nPara 3";
-        let chunks = split_by_paragraph(content);
+        let chunks = split_by_paragraph(content, None, false);
         assert_eq!(chunks.len(), 3);
         assert_eq!(chunks[0].2, 0); // Para 1 at line 0
+    }
+
+    #[test]
+    fn split_by_h2_with_context() {
+        let content = "# Title\n\nIntro\n\n## Section 1\n\nContent 1\n\n## Section 2\n\nContent 2";
+        let chunks = split_by_header(content, 2, Some("My Note"), true);
+        assert_eq!(chunks.len(), 3);
+        // First chunk should have note title prepended
+        assert!(chunks[0].1.starts_with("# My Note\n"));
+        // Second chunk should have note title and parent header
+        assert!(chunks[1].1.starts_with("# My Note\n"));
+        assert!(chunks[1].1.contains("# Title\n"));
+        assert!(chunks[1].1.contains("## Section 1"));
+    }
+
+    #[test]
+    fn split_by_paragraph_with_context() {
+        let content = "Para 1\n\nPara 2";
+        let chunks = split_by_paragraph(content, Some("My Note"), true);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].1.starts_with("# My Note\n"));
+        assert!(chunks[0].1.contains("Para 1"));
     }
 }
