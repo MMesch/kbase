@@ -61,7 +61,7 @@ cargo fmt --check        # Check formatting without changes
 ```bash
 # Vault management
 kbase init [path]             # Initialize vault
-kbase new "Note title"        # Create note
+kbase new "Note title"        # Create note (uses schema template)
 
 # List and query
 kbase list                    # List all notes
@@ -69,6 +69,17 @@ kbase list --tag recipe       # Filter by tag
 kbase tags                    # Show tag tree
 kbase tags --notes            # Show tag tree with notes
 kbase backlinks note-name     # Show incoming links
+kbase overview                # Vault summary: tags, key notes, link structure
+
+# Graph queries (SPARQL)
+kbase query "SELECT ..."      # Run SPARQL query on knowledge graph
+kbase query schema            # Show SPARQL schema documentation
+kbase query --file q.sparql   # Run query from file
+
+# Link conversion (for GitHub publishing)
+kbase convert markdown        # Convert [[wiki]] to [title](slug.md)
+kbase convert wiki            # Convert [text](slug.md) to [[Title]]
+kbase convert markdown --dry-run  # Preview changes
 
 # Validation
 kbase validate                # Validate against schema
@@ -80,6 +91,10 @@ kbase similar note-name       # Find similar notes
 # Editor integration
 kbase lsp                     # Start LSP server
 kbase install-skills          # Install AI assistant skills
+
+# Export
+kbase export --format dot     # Export graph to DOT (Graphviz)
+kbase export --format graphml # Export graph to GraphML
 ```
 
 ## Semantic Search Setup
@@ -104,8 +119,19 @@ In `.kbase/config.yaml`:
 
 ```yaml
 embeddings:
-  backend: onnx      # or "ollama" for Ollama server
-  chunk_level: "##"  # Split on H2 headers (options: none, #, ##, ###, paragraph)
+  backend: onnx           # or "ollama" for Ollama server
+  chunk_level: "##"       # Split on H2 headers (options: none, #, ##, ###, paragraph)
+  include_context: true   # Include note title + parent headers in chunks (default: true)
+```
+
+With `include_context: true`, each chunk includes the note title and parent headers for better semantic understanding. For example, a chunk under "## Ingredients" in "Recipe.md" would include:
+```
+# Recipe
+
+## Ingredients
+
+- flour
+- sugar
 ```
 
 Embeddings are cached in `.kbase/embeddings.redb` - only changed content is re-embedded.
@@ -114,10 +140,13 @@ Embeddings are cached in `.kbase/embeddings.redb` - only changed content is re-e
 
 kbase includes an LSP server for editor integration with features like:
 
-- **Go to definition**: Follow `[[wiki links]]` to target notes
+- **Go to definition**: Follow `[[wiki links]]` or `[markdown](links.md)` to target notes
+  - On tags: jumps to the tag note (e.g., `domain/ai` → opens "ai" note)
+  - Prompts to create note if it doesn't exist
 - **Find references**: Show all backlinks to the current note
 - **Hover**: Preview note content when hovering over links
 - **Completion**: Suggest note titles when typing `[[`
+- **Diagnostics**: Schema validation errors shown inline
 
 ### Neovim + CoC Setup
 
@@ -211,6 +240,8 @@ This creates `.claude/skills/` with:
 - `/kb-backlinks` - Show notes that reference a topic
 - `/kb-validate` - Run schema validation
 - `/kb-new` - Create new notes with suggestions
+- `/kb-overview` - Get vault summary (tags, key notes, structure)
+- `/kb-query` - Run SPARQL queries on the knowledge graph
 
 Use these skills to query your knowledge base from any project directory.
 

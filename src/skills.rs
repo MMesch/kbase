@@ -29,6 +29,8 @@ const SKILLS: &[(&str, &str)] = &[
     ("kb-backlinks", KB_BACKLINKS),
     ("kb-validate", KB_VALIDATE),
     ("kb-new", KB_NEW),
+    ("kb-overview", KB_OVERVIEW),
+    ("kb-query", KB_QUERY),
 ];
 
 const KB_SEARCH: &str = r#"---
@@ -132,4 +134,51 @@ Create a new note with title: $ARGUMENTS
    - Tags based on existing tag hierarchy
    - Links to related notes
    - Required fields from the schema
+"#;
+
+const KB_OVERVIEW: &str = r#"---
+name: kb-overview
+description: Get an overview of the knowledge base structure
+---
+
+# Knowledge Base Overview
+
+!`kbase overview --limit 10`
+
+## Instructions
+
+Use this overview to understand:
+- **Tags**: The taxonomy and categorization of knowledge
+- **Most referenced notes** (high in-degree): Key concepts that many notes link to
+- **Most referencing notes** (high out-degree): Index or MOC (Map of Content) notes
+- **Orphan notes**: Notes that may need better integration
+
+Suggest ways to improve organization if requested.
+"#;
+
+const KB_QUERY: &str = r#"---
+name: kb-query
+description: Run SPARQL queries on the knowledge graph
+---
+
+# Knowledge Graph Query
+
+Query: $ARGUMENTS
+
+## Schema Reference
+
+!`kbase query schema`
+
+## Query Results
+
+!`kbase query "$ARGUMENTS"`
+
+## Instructions
+
+Help the user understand the query results. If the query failed, suggest corrections based on the schema.
+
+Common queries:
+- Notes with specific tags: `SELECT ?title WHERE { ?n kb:title ?title ; kb:hasTag <kb:tag/mytag> }`
+- All links from a note: `SELECT ?target WHERE { ?n kb:title "Note" ; kb:linksTo ?target }`
+- Tag hierarchy: `SELECT ?tag ?parent WHERE { ?t kb:type kb:Tag ; kb:parentTag ?p . BIND(...) }`
 "#;
