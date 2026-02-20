@@ -11,7 +11,7 @@ use crate::store::Store;
 
 const KBASE_DIR: &str = ".kbase";
 const GRAPH_DB: &str = "graph.db";
-const GRAPH_NT: &str = "graph.nt";
+const GRAPH_NQ: &str = "graph.nq";
 
 /// Initialize a new vault at the given path
 pub fn init(path: &Path) -> Result<()> {
@@ -78,7 +78,7 @@ pub fn load_fresh(vault_path: &Path) -> Result<Store> {
 /// Load using N-Triples cache (fast startup, ~5ms)
 /// Returns the store and the number of notes updated
 pub fn load_ntriples(vault_path: &Path) -> Result<(Store, usize)> {
-    let cache_path = vault_path.join(KBASE_DIR).join(GRAPH_NT);
+    let cache_path = vault_path.join(KBASE_DIR).join(GRAPH_NQ);
     let store = Store::new_with_cache(&cache_path)?;
     let config = Config::load(vault_path)?;
 

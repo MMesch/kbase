@@ -45,7 +45,7 @@ impl Store {
                 .with_context(|| format!("Failed to open {}", cache_path.display()))?;
             let reader = BufReader::new(file);
             inner.bulk_loader().load_from_reader(
-                RdfParser::from_format(RdfFormat::NTriples),
+                RdfParser::from_format(RdfFormat::NQuads),
                 reader,
             )?;
         }
@@ -73,7 +73,7 @@ impl Store {
             if self.dirty.load(Ordering::Relaxed) {
                 let file = File::create(cache_path)
                     .with_context(|| format!("Failed to create {}", cache_path.display()))?;
-                self.inner.dump_to_writer(RdfFormat::NTriples, file)?;
+                self.inner.dump_to_writer(RdfFormat::NQuads, file)?;
                 self.dirty.store(false, Ordering::Relaxed);
             }
         }
