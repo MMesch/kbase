@@ -79,6 +79,35 @@ impl Store {
         Ok(paths)
     }
 
+    /// Get all note paths with their mtimes in a single query (for incremental updates)
+    pub fn get_all_note_mtimes(&self) -> Result<std::collections::HashMap<String, u64>> {
+        let query = format!(
+            r#"
+            PREFIX kb: <{KBASE_NS}>
+            SELECT ?path ?mtime WHERE {{
+                ?note kb:type kb:Note .
+                ?note kb:path ?path .
+                OPTIONAL {{ ?note kb:mtime ?mtime }}
+            }}
+            "#
+        );
+
+        let mut mtimes = std::collections::HashMap::new();
+        if let QueryResults::Solutions(solutions) = self.inner.query(&query)? {
+            for solution in solutions {
+                let solution = solution?;
+                if let Some(Term::Literal(path)) = solution.get("path") {
+                    let mtime = solution.get("mtime")
+                        .and_then(|t| if let Term::Literal(lit) = t { Some(lit) } else { None })
+                        .and_then(|lit| lit.value().parse::<u64>().ok())
+                        .unwrap_or(0);
+                    mtimes.insert(path.value().to_string(), mtime);
+                }
+            }
+        }
+        Ok(mtimes)
+    }
+
     /// Remove a note completely (for deleted files)
     pub fn remove_note(&self, path: &str) -> Result<()> {
         self.remove_note_triples(path)

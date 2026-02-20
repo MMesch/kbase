@@ -69,8 +69,8 @@ pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
     let store = Store::open(&db_path)?;
     let config = Config::load(vault_path)?;
 
-    // Get all stored note paths
-    let stored_paths: HashSet<String> = store.get_all_note_paths()?.into_iter().collect();
+    // Get all stored note paths and mtimes in a single query
+    let stored_mtimes = store.get_all_note_mtimes()?;
 
     // Scan filesystem for current notes
     let mut current_paths: HashSet<String> = HashSet::new();
@@ -95,15 +95,12 @@ pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
         let file_mtime = metadata.modified().ok();
         let file_mtime_secs = file_mtime
             .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs());
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
 
-        // Check if we need to update this note
-        let stored_mtime = store.get_note_mtime(&path_str)?;
-        let needs_update = match (file_mtime_secs, stored_mtime) {
-            (Some(file_ts), Some(stored_ts)) => file_ts > stored_ts,
-            (Some(_), None) => true, // New file
-            _ => true,               // Can't determine, update anyway
-        };
+        // Check if we need to update this note (compare with cached mtime)
+        let stored_mtime = stored_mtimes.get(&path_str).copied().unwrap_or(0);
+        let needs_update = file_mtime_secs > stored_mtime || stored_mtime == 0;
 
         if needs_update {
             if let Ok(parsed) = note::parse(path, config.link_syntax) {
@@ -114,9 +111,9 @@ pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
     }
 
     // Remove notes that no longer exist
-    for stored_path in stored_paths {
-        if !current_paths.contains(&stored_path) {
-            store.remove_note(&stored_path)?;
+    for stored_path in stored_mtimes.keys() {
+        if !current_paths.contains(stored_path) {
+            store.remove_note(stored_path)?;
             updated += 1;
         }
     }
