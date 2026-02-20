@@ -41,8 +41,17 @@ pub fn find_vault_root() -> Result<PathBuf> {
     }
 }
 
-/// Load all notes into an in-memory store
+/// Load vault using persistent store with incremental updates
+/// This is the primary way to load a vault - it uses the cached graph.db
+/// and only re-parses notes that have changed since last load.
 pub fn load(vault_path: &Path) -> Result<Store> {
+    let (store, _updated) = load_persistent(vault_path)?;
+    Ok(store)
+}
+
+/// Load all notes into a fresh in-memory store (no caching)
+/// Use this only for testing or when you need a clean slate.
+pub fn load_fresh(vault_path: &Path) -> Result<Store> {
     let notes = load_notes(vault_path)?;
     let store = Store::new()?;
 
@@ -131,6 +140,10 @@ pub fn update_note(store: &Store, path: &Path, link_syntax: crate::config::LinkS
         // File was deleted
         store.remove_note(&path.to_string_lossy())?;
     }
+
+    // Clean up any orphan tags that may result from tag changes
+    store.cleanup_orphan_tags()?;
+
     Ok(())
 }
 

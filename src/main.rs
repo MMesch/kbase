@@ -709,13 +709,17 @@ fn main() -> Result<()> {
         }
         Commands::CleanTags { dry_run } => {
             let vault_path = get_vault()?;
-            let notes = vault::load_notes(&vault_path)?;
-            let store = vault::load(&vault_path)?;
 
-            // Get all tag paths from the graph (raw paths, not formatted tree)
+            // Open the persistent store directly (without incremental update)
+            // so we can see orphans before cleanup
+            let db_path = vault_path.join(".kbase").join("graph.db");
+            let store = store::Store::open(&db_path)?;
+
+            // Get all tag paths from the graph
             let all_tags = store.get_all_tag_paths()?;
 
-            // Get tags actually used by notes
+            // Get tags actually used by notes (from disk)
+            let notes = vault::load_notes(&vault_path)?;
             let mut used_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
             for n in &notes {
                 for tag in &n.tags {
@@ -730,7 +734,7 @@ fn main() -> Result<()> {
             // Find orphan tags
             let orphan_tags: Vec<_> = all_tags
                 .iter()
-                .filter(|t| !used_tags.contains(*t))
+                .filter(|t| !used_tags.contains(t.as_str()))
                 .collect();
 
             if orphan_tags.is_empty() {
@@ -742,15 +746,8 @@ fn main() -> Result<()> {
                 }
 
                 if !dry_run {
-                    // Rebuild the graph without orphan tags (by reloading from notes)
-                    println!("\nRebuilding graph...");
-                    // The simplest way is to delete and recreate the graph store
-                    let graph_path = vault_path.join(".kbase").join("graph.db");
-                    if graph_path.exists() {
-                        std::fs::remove_dir_all(&graph_path)?;
-                    }
-                    vault::load(&vault_path)?; // This rebuilds the graph
-                    println!("Removed {} orphan tags.", orphan_tags.len());
+                    let removed = store.cleanup_orphan_tags()?;
+                    println!("\nRemoved {} orphan tags.", removed);
                 } else {
                     println!("\n{} orphan tags would be removed.", orphan_tags.len());
                 }

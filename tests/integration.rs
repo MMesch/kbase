@@ -15,7 +15,7 @@ fn specs_path() -> PathBuf {
 #[test]
 fn load_specs_vault() {
     let vault_path = specs_path();
-    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+    let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
     // Should have loaded multiple notes
     let notes = store.list_notes(None, false).expect("Failed to list notes");
@@ -38,7 +38,7 @@ fn load_specs_vault() {
 #[test]
 fn filter_by_tag() {
     let vault_path = specs_path();
-    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+    let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
     // Filter by spec/feature tag - should include descendants
     let feature_notes = store
@@ -65,7 +65,7 @@ fn filter_by_tag() {
 #[test]
 fn filter_by_parent_tag() {
     let vault_path = specs_path();
-    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+    let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
     // Filter by parent tag "spec" - should include all specs (spec/feature, spec/contract, etc.)
     let all_specs = store
@@ -126,7 +126,7 @@ fn extract_links_from_spec() {
 #[test]
 fn backlinks_finds_references() {
     let vault_path = specs_path();
-    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+    let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
     // metadata-graph links to validation.md, so backlinks for validation should include metadata-graph
     let backlinks = store
@@ -144,7 +144,7 @@ fn backlinks_finds_references() {
 #[test]
 fn store_handles_empty_tag_filter() {
     let vault_path = specs_path();
-    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+    let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
     // Non-existent tag should return empty
     let notes = store
@@ -157,7 +157,7 @@ fn store_handles_empty_tag_filter() {
 #[test]
 fn list_tags_returns_tree() {
     let vault_path = specs_path();
-    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+    let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
     let tree = store.list_tags(None, false).expect("Failed to list tags");
 
@@ -182,7 +182,7 @@ fn list_tags_returns_tree() {
 #[test]
 fn list_tags_with_notes() {
     let vault_path = specs_path();
-    let store = vault::load(&vault_path).expect("Failed to load specs vault");
+    let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
     let tree = store
         .list_tags(Some("spec/feature"), true)
