@@ -114,6 +114,92 @@ impl Schema {
         violations
     }
 
+    /// Generate frontmatter YAML for a new note based on schema.
+    /// Includes title, tags, required fields, and enum fields.
+    pub fn generate_frontmatter(&self, title: &str) -> String {
+        let mut lines = Vec::new();
+
+        // Title is always first
+        lines.push(format!("title: \"{}\"", title));
+
+        // Tags are always included
+        let tags_in_required = self.required.contains(&"tags".to_string());
+        if !tags_in_required {
+            lines.push("tags: []".to_string());
+        }
+
+        // Track which fields we've added
+        let mut added_fields = std::collections::HashSet::new();
+        added_fields.insert("title".to_string());
+        added_fields.insert("tags".to_string());
+
+        // Add required fields with defaults
+        for field in &self.required {
+            if added_fields.contains(field) {
+                continue;
+            }
+            added_fields.insert(field.clone());
+
+            let default_value = if let Some(schema) = self.fields.get(field) {
+                self.default_value_for_type(&schema.field_type, &schema.values)
+            } else {
+                // No schema defined, assume string
+                "\"\"".to_string()
+            };
+
+            if let Some(schema) = self.fields.get(field) {
+                if schema.field_type == FieldType::Enum && !schema.values.is_empty() {
+                    lines.push(format!("{}: {} # {}", field, default_value, schema.values.join(", ")));
+                } else {
+                    lines.push(format!("{}: {}", field, default_value));
+                }
+            } else {
+                lines.push(format!("{}: {}", field, default_value));
+            }
+        }
+
+        // Add non-required enum fields so user can see options
+        for (field, schema) in &self.fields {
+            if added_fields.contains(field) {
+                continue;
+            }
+            if schema.field_type == FieldType::Enum && !schema.values.is_empty() {
+                added_fields.insert(field.clone());
+                lines.push(format!("{}: \"\" # {}", field, schema.values.join(", ")));
+            }
+        }
+
+        lines.join("\n")
+    }
+
+    fn default_value_for_type(&self, field_type: &FieldType, values: &[String]) -> String {
+        match field_type {
+            FieldType::String => "\"\"".to_string(),
+            FieldType::List => "[]".to_string(),
+            FieldType::Enum => {
+                if let Some(first) = values.first() {
+                    format!("\"{}\"", first)
+                } else {
+                    "\"\"".to_string()
+                }
+            }
+            FieldType::Date => {
+                // Use today's date
+                let now = std::time::SystemTime::now();
+                let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                let secs = duration.as_secs();
+                // Simple date calculation (approximate, good enough for defaults)
+                let days = secs / 86400;
+                let year = 1970 + days / 365;
+                let day_of_year = days % 365;
+                let month = (day_of_year / 30) + 1;
+                let day = (day_of_year % 30) + 1;
+                format!("\"{:04}-{:02}-{:02}\"", year, month.min(12), day.min(28))
+            }
+            FieldType::Number => "0".to_string(),
+        }
+    }
+
     fn validate_field(
         &self,
         note_path: &str,
@@ -222,5 +308,65 @@ mod tests {
         assert!(!is_valid_date("2026-13-01"));
         assert!(!is_valid_date("2026-01-32"));
         assert!(!is_valid_date("26-01-15"));
+    }
+
+    #[test]
+    fn generate_frontmatter_basic() {
+        let schema = Schema::default();
+        let fm = schema.generate_frontmatter("My Note");
+        assert!(fm.contains("title: \"My Note\""));
+        assert!(fm.contains("tags: []"));
+    }
+
+    #[test]
+    fn generate_frontmatter_with_required_fields() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "status".to_string(),
+            FieldSchema {
+                field_type: FieldType::Enum,
+                values: vec!["draft".to_string(), "published".to_string()],
+            },
+        );
+        fields.insert(
+            "author".to_string(),
+            FieldSchema {
+                field_type: FieldType::String,
+                values: vec![],
+            },
+        );
+
+        let schema = Schema {
+            required: vec!["status".to_string(), "author".to_string()],
+            fields,
+            constraints: vec![],
+        };
+
+        let fm = schema.generate_frontmatter("Test");
+        assert!(fm.contains("title: \"Test\""));
+        assert!(fm.contains("tags: []"));
+        assert!(fm.contains("status: \"draft\" # draft, published"));
+        assert!(fm.contains("author: \"\""));
+    }
+
+    #[test]
+    fn generate_frontmatter_includes_non_required_enums() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "priority".to_string(),
+            FieldSchema {
+                field_type: FieldType::Enum,
+                values: vec!["high".to_string(), "medium".to_string(), "low".to_string()],
+            },
+        );
+
+        let schema = Schema {
+            required: vec![],
+            fields,
+            constraints: vec![],
+        };
+
+        let fm = schema.generate_frontmatter("Test");
+        assert!(fm.contains("priority: \"\" # high, medium, low"));
     }
 }

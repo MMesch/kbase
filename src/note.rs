@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use crate::config::LinkSyntax;
+use crate::schema::Schema;
 
 /// A link in a note with position information
 #[derive(Debug, Clone)]
@@ -161,6 +162,29 @@ tags: []
 # {}
 "#,
         title, title
+    );
+
+    fs::write(&note_path, content)
+        .with_context(|| format!("Failed to write {}", note_path.display()))?;
+
+    Ok(note_path)
+}
+
+/// Create a new note with schema-based frontmatter template
+pub fn create_with_schema(vault_path: &Path, title: &str) -> Result<PathBuf> {
+    let filename = slugify(title);
+    let note_path = vault_path.join(format!("{}.md", filename));
+
+    if note_path.exists() {
+        bail!("Note already exists: {}", note_path.display());
+    }
+
+    let schema = Schema::load(vault_path)?;
+    let frontmatter = schema.generate_frontmatter(title);
+
+    let content = format!(
+        "---\n{}\n---\n\n# {}\n",
+        frontmatter, title
     );
 
     fs::write(&note_path, content)

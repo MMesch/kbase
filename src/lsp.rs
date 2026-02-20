@@ -571,6 +571,104 @@ impl KbaseLanguageServer {
 
         CompletionResponse::Array(items)
     }
+
+    /// Publish schema validation diagnostics for a file
+    async fn publish_diagnostics_for_file(&self, uri: &Url) {
+        let path = match uri.to_file_path() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+
+        let vault_path = match self.vault_path.read().unwrap().clone() {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Load schema
+        let schema = match crate::schema::Schema::load(&vault_path) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        // Parse the note
+        let config = crate::config::Config::load(&vault_path).unwrap_or_default();
+        let parsed_note = match note::parse(&path, config.link_syntax) {
+            Ok(n) => n,
+            Err(_) => return,
+        };
+
+        // Validate against schema
+        let violations = schema.validate(&parsed_note);
+
+        // Convert violations to diagnostics
+        let diagnostics: Vec<Diagnostic> = violations
+            .into_iter()
+            .map(|v| Diagnostic {
+                range: Range {
+                    start: Position { line: 0, character: 0 },
+                    end: Position { line: 0, character: 1 },
+                },
+                severity: Some(DiagnosticSeverity::WARNING),
+                source: Some("kbase".to_string()),
+                message: v.message,
+                ..Default::default()
+            })
+            .collect();
+
+        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
+    }
+
+    /// Ask user if they want to create a non-existent note, create it if yes
+    async fn offer_create_note(&self, title: &str) -> Option<Location> {
+        let response = self
+            .client
+            .show_message_request(
+                MessageType::INFO,
+                format!("Note '{}' doesn't exist. Create it?", title),
+                Some(vec![
+                    MessageActionItem {
+                        title: "Create".to_string(),
+                        properties: Default::default(),
+                    },
+                    MessageActionItem {
+                        title: "Cancel".to_string(),
+                        properties: Default::default(),
+                    },
+                ]),
+            )
+            .await;
+
+        if let Ok(Some(action)) = response {
+            if action.title == "Create" {
+                let vault_path = self.vault_path.read().unwrap().clone()?;
+
+                match note::create_with_schema(&vault_path, title) {
+                    Ok(note_path) => {
+                        self.client
+                            .log_message(MessageType::INFO, format!("Created {}", note_path.display()))
+                            .await;
+
+                        // Refresh notes cache
+                        self.refresh_notes().await;
+
+                        // Return location of new file
+                        let uri = Url::from_file_path(&note_path).ok()?;
+                        return Some(Location {
+                            uri,
+                            range: Range::default(),
+                        });
+                    }
+                    Err(e) => {
+                        self.client
+                            .show_message(MessageType::ERROR, format!("Failed to create note: {}", e))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        None
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -657,8 +755,9 @@ impl LanguageServer for KbaseLanguageServer {
         Ok(())
     }
 
-    async fn did_open(&self, _params: DidOpenTextDocumentParams) {
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
         self.refresh_notes().await;
+        self.publish_diagnostics_for_file(&params.text_document.uri).await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
@@ -689,6 +788,9 @@ impl LanguageServer for KbaseLanguageServer {
         self.process_file_changes().await;
 
         self.refresh_notes().await;
+
+        // Publish diagnostics for the saved file
+        self.publish_diagnostics_for_file(&params.text_document.uri).await;
     }
 
     async fn goto_definition(
@@ -754,6 +856,11 @@ impl LanguageServer for KbaseLanguageServer {
                             uri: target_uri,
                             range: Range::default(),
                         })));
+                    }
+                } else {
+                    // Note doesn't exist - ask if user wants to create it
+                    if let Some(location) = self.offer_create_note(&link_target).await {
+                        return Ok(Some(GotoDefinitionResponse::Scalar(location)));
                     }
                 }
             }
