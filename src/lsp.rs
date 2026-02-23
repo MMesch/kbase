@@ -315,7 +315,24 @@ impl KbaseLanguageServer {
     /// Find note by slug (filename without .md extension)
     fn find_note_by_slug(&self, slug: &str) -> Option<Note> {
         let notes = self.notes.read().unwrap();
-        let slug_lower = slug.to_lowercase();
+        let slug_clean = slug.strip_prefix('/').unwrap_or(slug);
+        let slug_lower = slug_clean.to_lowercase();
+
+        // Try matching by vault-relative path (without .md)
+        let vault_path = self.vault_path.read().unwrap().clone();
+        if let Some(ref vp) = vault_path {
+            if let Some(note) = notes.values().find(|n| {
+                n.path.strip_prefix(vp)
+                    .ok()
+                    .and_then(|p| p.to_str())
+                    .map(|p| p.trim_end_matches(".md").to_lowercase() == slug_lower)
+                    .unwrap_or(false)
+            }) {
+                return Some(note.clone());
+            }
+        }
+
+        // Fall back to matching by filename stem only
         notes
             .values()
             .find(|n| {

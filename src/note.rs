@@ -309,11 +309,11 @@ pub fn link_path(
         }
         config::LinkBase::Vault => {
             if let Some(root) = vault_root {
-                note_path.strip_prefix(root)
+                format!("/{}", note_path.strip_prefix(root)
                     .unwrap_or(note_path)
-                    .to_string_lossy().to_string()
+                    .to_string_lossy())
             } else {
-                note_path.to_string_lossy().to_string()
+                format!("/{}", note_path.to_string_lossy())
             }
         }
     }
@@ -335,9 +335,10 @@ pub fn resolve_link_target<'a>(
             }
         }
     }
-    // Try relative to vault root
+    // Try relative to vault root (strip leading / if present)
     if let Some(root) = vault_root {
-        if let Ok(resolved) = root.join(target).canonicalize() {
+        let stripped = target.strip_prefix('/').unwrap_or(target);
+        if let Ok(resolved) = root.join(stripped).canonicalize() {
             if let Some(note) = notes.iter().find(|n| n.path.canonicalize().ok().as_ref() == Some(&resolved)) {
                 return Some(note);
             }
@@ -534,7 +535,7 @@ mod tests {
         let note = Path::new("/vault/sub/note.md");
         let current = Path::new("/vault/other/current.md");
         let result = link_path(note, current, config::LinkBase::Vault, Some(Path::new("/vault")));
-        assert_eq!(result, "sub/note.md");
+        assert_eq!(result, "/sub/note.md");
     }
 
 }
