@@ -873,11 +873,7 @@ fn main() -> Result<()> {
         }
         Commands::CleanTags { dry_run } => {
             let vault_path = get_vault()?;
-
-            // Open the persistent store directly (without incremental update)
-            // so we can see orphans before cleanup
-            let db_path = vault_path.join(".kbase").join("graph.db");
-            let store = store::Store::open(&db_path)?;
+            let store = load_store(&vault_path, &mut timer)?;
 
             // Get all tag paths from the graph
             let all_tags = store.get_all_tag_paths()?;
