@@ -93,10 +93,22 @@ impl TreesConfig {
     }
 }
 
+/// How markdown link paths are resolved for completion
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkBase {
+    #[default]
+    Relative, // Relative to current file (standard markdown)
+    Vault,    // Relative to vault root (.kbase directory)
+    Git,      // Relative to git repository root
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
     pub link_syntax: LinkSyntax,
+    #[serde(default)]
+    pub link_base: LinkBase,
     #[serde(default)]
     pub embeddings: EmbeddingsConfig,
     #[serde(default)]
