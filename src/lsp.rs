@@ -726,8 +726,10 @@ impl KbaseLanguageServer {
         if let Ok(Some(action)) = response {
             if action.title == "Create" {
                 let vault_path = self.vault_path.read().unwrap().clone()?;
+                let cfg = Config::load(&vault_path).unwrap_or_default();
+                let notes_path = cfg.notes_path(&vault_path);
 
-                match note::create_with_schema(&vault_path, title) {
+                match note::create_with_schema(&notes_path, title) {
                     Ok(note_path) => {
                         self.client
                             .log_message(MessageType::INFO, format!("Created {}", note_path.display()))
@@ -1127,25 +1129,29 @@ impl LanguageServer for KbaseLanguageServer {
                     };
                     if in_md_link_text {
                         if !after_cursor.starts_with('[') {
-                            let bracket_col = before_cursor.rfind('[').unwrap() as u32;
+                            let bracket_pos = before_cursor.rfind('[').unwrap();
+                            let typed = &before_cursor[bracket_pos + 1..];
+                            let typed_lower = typed.to_lowercase();
                             let notes = self.notes.read().unwrap();
                             let items: Vec<CompletionItem> = notes
                                 .values()
                                 .filter(|n| n.path != *current_path)
+                                .filter(|n| typed.is_empty() || n.title.to_lowercase().contains(&typed_lower))
                                 .map(|note| {
                                     let rel_str = note::link_path(&note.path, current_path, cfg.link_base, vault_root.as_deref());
-                                    let new_text = format!("[{}]({})", note.title, rel_str);
+                                    let insert_text = format!("{}]({})", note.title, rel_str);
                                     let replace_range = Range {
-                                        start: Position { line: position.line, character: bracket_col },
+                                        start: Position { line: position.line, character: (bracket_pos + 1) as u32 },
                                         end: Position { line: position.line, character: position.character },
                                     };
                                     CompletionItem {
                                         label: note.title.clone(),
                                         kind: Some(CompletionItemKind::FILE),
                                         detail: Some(rel_str),
+                                        filter_text: Some(note.title.clone()),
                                         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                                             range: replace_range,
-                                            new_text,
+                                            new_text: insert_text,
                                         })),
                                         ..Default::default()
                                     }

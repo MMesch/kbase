@@ -950,3 +950,44 @@ fn clean_tags_detects_orphans_after_deletion() {
 
     cleanup_temp_db(&db_path);
 }
+
+// ============================================================================
+// Broken link detection tests
+// ============================================================================
+
+#[test]
+fn detect_broken_links_in_specs() {
+    let vault_path = specs_path();
+    let notes = vault::load_notes(&vault_path).expect("Failed to load notes");
+
+    let mut broken: Vec<(String, String)> = Vec::new();
+
+    for n in &notes {
+        for link in &n.links {
+            let found = if link.target.ends_with(".md") {
+                note::resolve_link_target(&link.target, &n.path, &notes, Some(&vault_path)).is_some()
+            } else {
+                // Wiki-style: match by title
+                notes.iter().any(|other| other.title.to_lowercase() == link.target.to_lowercase())
+            };
+            if !found {
+                broken.push((
+                    n.path.file_name().unwrap().to_string_lossy().to_string(),
+                    link.target.clone(),
+                ));
+            }
+        }
+    }
+
+    // Real links in specs (e.g. ../decisions/decision-001-stack.md) should resolve
+    assert!(
+        !broken.iter().any(|(file, target)| file == "graph-databases.md" && target.contains("decision-001-stack")),
+        "Valid link to decision-001-stack.md should not be broken"
+    );
+
+    // Example/dummy links in note-format.md should be detected as broken
+    assert!(
+        broken.iter().any(|(file, _)| file == "note-format.md"),
+        "note-format.md has example links that should be broken"
+    );
+}

@@ -280,7 +280,9 @@ fn main() -> Result<()> {
         }
         Commands::New { title } => {
             let vault_path = get_vault()?;
-            let note_path = note::create(&vault_path, &title)?;
+            let config = Config::load(&vault_path)?;
+            let notes_path = config.notes_path(&vault_path);
+            let note_path = note::create(&notes_path, &title)?;
             println!("Created {}", note_path.display());
         }
         Commands::List { tag } => {
@@ -328,6 +330,35 @@ fn main() -> Result<()> {
                 }
             }
             timer.lap("schema validation");
+
+            // Broken link detection
+            let config = Config::load(&vault_path)?;
+            let titles: std::collections::HashSet<String> = notes.iter()
+                .map(|n| n.title.to_lowercase())
+                .collect();
+            for n in &notes {
+                for link in &n.links {
+                    let found = match config.link_syntax {
+                        config::LinkSyntax::Wiki => {
+                            titles.contains(&link.target.to_lowercase())
+                        }
+                        config::LinkSyntax::Markdown | config::LinkSyntax::Both => {
+                            // For markdown links, try resolving the path
+                            if link.target.ends_with(".md") {
+                                note::resolve_link_target(&link.target, &n.path, &notes, Some(&vault_path)).is_some()
+                            } else {
+                                // Wiki-style target in Both mode
+                                titles.contains(&link.target.to_lowercase())
+                            }
+                        }
+                    };
+                    if !found {
+                        println!("{}:{}: broken link to '{}'", n.path.display(), link.line + 1, link.target);
+                        total_violations += 1;
+                    }
+                }
+            }
+            timer.lap("broken links");
 
             // Graph constraints (SPARQL)
             if !schema.constraints.is_empty() {
