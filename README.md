@@ -8,7 +8,7 @@ A CLI-first knowledge base management tool with graph-powered relationships.
 
 - **CLI-first workflow**: Script, automate, and integrate with your tools
 - **Graph relationships**: First-class support for links, backlinks, and queries
-- **Obsidian compatibility**: Use kg for CLI power, Obsidian for visual editing
+- **Obsidian compatibility**: Use kbase for CLI power, Obsidian for visual editing
 - **Multiple vaults**: Separate knowledge bases for different domains
 
 ## Development Approach
@@ -76,13 +76,21 @@ kbase query "SELECT ..."      # Run SPARQL query on knowledge graph
 kbase query schema            # Show SPARQL schema documentation
 kbase query --file q.sparql   # Run query from file
 
-# Link conversion (for GitHub publishing)
+# Link conversion
 kbase convert markdown        # Convert [[wiki]] to [title](slug.md)
 kbase convert wiki            # Convert [text](slug.md) to [[Title]]
+kbase convert normalize       # Rewrite markdown link paths using configured link_base
 kbase convert markdown --dry-run  # Preview changes
 
+# Tag management
+kbase retag old/prefix new    # Rename tags: old/prefix/x -> new/x
+kbase retag old/prefix new --dry-run  # Preview tag changes
+kbase organize --tree domain  # Move notes into directories matching tag hierarchy
+kbase organize --dry-run      # Preview file moves
+kbase clean-tags              # Remove orphan tags from the graph
+
 # Validation
-kbase validate                # Validate against schema
+kbase validate                # Validate against schema and detect broken links
 
 # Semantic search (requires ONNX model)
 kbase search "query"          # Semantic search across notes
@@ -95,6 +103,32 @@ kbase install-skills          # Install AI assistant skills
 # Export
 kbase export --format dot     # Export graph to DOT (Graphviz)
 kbase export --format graphml # Export graph to GraphML
+```
+
+## Configuration
+
+Settings live in `.kbase/config.yaml`:
+
+```yaml
+# Link syntax to recognize (wiki, markdown, or both; default: both)
+link_syntax: both
+
+# How link paths are computed for completion/normalize (vault or relative; default: vault)
+# vault: paths from vault root with leading / (e.g. /knowledge/note.md)
+# relative: paths relative to current file (e.g. ../other/note.md)
+link_base: vault
+
+# Restrict note scanning to a subdirectory (default: entire vault)
+notes_dir: knowledge
+
+# Store backend (nquads, rocksdb, or fresh; default: nquads)
+store: nquads
+
+# Embeddings configuration
+embeddings:
+  backend: onnx
+  chunk_level: "##"
+  include_context: true
 ```
 
 ## Semantic Search Setup
@@ -145,7 +179,7 @@ kbase includes an LSP server for editor integration with features like:
   - Prompts to create note if it doesn't exist
 - **Find references**: Show all backlinks to the current note
 - **Hover**: Preview note content when hovering over links
-- **Completion**: Suggest note titles when typing `[[`
+- **Completion**: Note titles on `[[` (wiki) and `[` (markdown), tag paths in frontmatter
 - **Diagnostics**: Schema validation errors shown inline
 
 ### Neovim + CoC Setup
@@ -238,10 +272,14 @@ This creates `.claude/skills/` with:
 - `/kb-search` - Semantic search with results as context
 - `/kb-similar` - Find related notes
 - `/kb-backlinks` - Show notes that reference a topic
-- `/kb-validate` - Run schema validation
+- `/kb-validate` - Run schema validation and check for broken links
 - `/kb-new` - Create new notes with suggestions
 - `/kb-overview` - Get vault summary (tags, key notes, structure)
 - `/kb-query` - Run SPARQL queries on the knowledge graph
+- `/kb-tags` - Show tag hierarchy
+- `/kb-list` - List notes (with optional tag filter)
+- `/kb-retag` - Rename tags by replacing a prefix
+- `/kb-organize` - Organize notes into directories by tag
 
 Use these skills to query your knowledge base from any project directory.
 

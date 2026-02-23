@@ -31,6 +31,10 @@ const SKILLS: &[(&str, &str)] = &[
     ("kb-new", KB_NEW),
     ("kb-overview", KB_OVERVIEW),
     ("kb-query", KB_QUERY),
+    ("kb-tags", KB_TAGS),
+    ("kb-list", KB_LIST),
+    ("kb-retag", KB_RETAG),
+    ("kb-organize", KB_ORGANIZE),
 ];
 
 const KB_SEARCH: &str = r#"---
@@ -45,11 +49,8 @@ Search the knowledge base for: $ARGUMENTS
 ## Results
 
 !`kbase search "$ARGUMENTS" --limit 10`
-!`kbase -v /path/to/vault search "$ARGUMENTS" --limit 10`
 
 ## Instructions
-
-Run from within a vault directory or specify vault path with `-v`.
 
 Use the search results above to inform your response. Reference specific notes when relevant.
 If no results are found, acknowledge this and suggest alternative search terms.
@@ -67,11 +68,8 @@ Finding notes similar to: $ARGUMENTS
 ## Similar Notes
 
 !`kbase similar "$ARGUMENTS" --limit 10`
-!`kbase -v /path/to/vault similar "$ARGUMENTS" --limit 10`
 
 ## Instructions
-
-Run from within a vault directory or specify vault path with `-v`.
 
 Use these related notes to provide additional context or connections.
 Highlight relevant relationships between the notes.
@@ -89,11 +87,8 @@ Finding notes that link to: $ARGUMENTS
 ## References
 
 !`kbase backlinks "$ARGUMENTS"`
-!`kbase -v /path/to/vault backlinks "$ARGUMENTS"`
 
 ## Instructions
-
-Run from within a vault directory or specify vault path with `-v`.
 
 These notes reference the topic. Use them to understand:
 - How this concept relates to others
@@ -103,17 +98,14 @@ These notes reference the topic. Use them to understand:
 
 const KB_VALIDATE: &str = r#"---
 name: kb-validate
-description: Validate the knowledge base against its schema
+description: Validate the knowledge base against its schema and check for broken links
 ---
 
 # Knowledge Base Validation
 
 !`kbase validate`
-!`kbase -v /path/to/vault validate`
 
 ## Instructions
-
-Run from within a vault directory or specify vault path with `-v`.
 
 Review any validation errors above. For each error:
 1. Explain what the error means
@@ -156,11 +148,8 @@ description: Get an overview of the knowledge base structure
 # Knowledge Base Overview
 
 !`kbase overview --limit 10`
-!`kbase -v /path/to/vault overview --limit 10`
 
 ## Instructions
-
-Run from within a vault directory or specify vault path with `-v`.
 
 Use this overview to understand:
 - **Tags**: The taxonomy and categorization of knowledge
@@ -183,16 +172,12 @@ Query: $ARGUMENTS
 ## Schema Reference
 
 !`kbase query schema`
-!`kbase -v /path/to/vault query schema`
 
 ## Query Results
 
 !`kbase query "$ARGUMENTS"`
-!`kbase -v /path/to/vault query "$ARGUMENTS"`
 
 ## Instructions
-
-Run from within a vault directory or specify vault path with `-v`.
 
 Help the user understand the query results. If the query failed, suggest corrections based on the schema.
 
@@ -200,4 +185,82 @@ Common queries:
 - Notes with specific tags: `SELECT ?title WHERE { ?n kb:title ?title ; kb:hasTag <kb:tag/mytag> }`
 - All links from a note: `SELECT ?target WHERE { ?n kb:title "Note" ; kb:linksTo ?target }`
 - Tag hierarchy: `SELECT ?tag ?parent WHERE { ?t kb:type kb:Tag ; kb:parentTag ?p . BIND(...) }`
+"#;
+
+const KB_TAGS: &str = r#"---
+name: kb-tags
+description: Show the tag hierarchy in the knowledge base
+---
+
+# Tag Hierarchy
+
+!`kbase tags --notes`
+
+## Instructions
+
+Use the tag tree to understand how knowledge is organized.
+Suggest improvements to the taxonomy if requested.
+"#;
+
+const KB_LIST: &str = r#"---
+name: kb-list
+description: List notes in the knowledge base, optionally filtered by tag
+---
+
+# Notes
+
+!`kbase list $ARGUMENTS`
+
+## Instructions
+
+Show the list of notes. If $ARGUMENTS contains a tag filter (e.g. `--tag recipe`), explain the filtering.
+"#;
+
+const KB_RETAG: &str = r#"---
+name: kb-retag
+description: Rename tags by replacing a prefix across all notes
+---
+
+# Retag Notes
+
+Renaming tag prefix: $ARGUMENTS
+
+## Preview
+
+!`kbase retag $ARGUMENTS --dry-run`
+
+## Instructions
+
+Show the user what would change. If they confirm, run without --dry-run:
+```bash
+kbase retag $ARGUMENTS
+```
+
+Examples:
+- `kbase retag tech/ai type` — renames tech/ai -> type, tech/ai/ml -> type/ml
+- `kbase retag old new` — renames old -> new, old/sub -> new/sub
+"#;
+
+const KB_ORGANIZE: &str = r#"---
+name: kb-organize
+description: Organize notes into directories based on tag hierarchy
+---
+
+# Organize Notes
+
+## Preview
+
+!`kbase organize $ARGUMENTS --dry-run`
+
+## Instructions
+
+Show the user the planned file moves. If they confirm, run without --dry-run:
+```bash
+kbase organize $ARGUMENTS
+```
+
+Options:
+- `--tree domain` — only organize by tags under the "domain" prefix
+- `--flat` — move all notes to vault root instead of creating directories
+- `--symlinks` — create symlinks for notes with multiple tag paths
 "#;
