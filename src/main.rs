@@ -982,7 +982,7 @@ fn normalize_markdown_links(
         }
 
         // Try to resolve the link target to a known note
-        if let Some(resolved_note) = note::resolve_link_target(target, current_file, notes) {
+        if let Some(resolved_note) = note::resolve_link_target(target, current_file, notes, Some(vault_path)) {
             let new_path = note::link_path(&resolved_note.path, current_file, link_base, Some(vault_path));
             format!("[{}]({})", text, new_path)
         } else {

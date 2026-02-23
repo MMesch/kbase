@@ -112,8 +112,9 @@ fn sync_store_with_files(store: &Store, vault_path: &Path, config: &Config) -> R
     // Scan filesystem for current notes
     let mut current_paths: HashSet<String> = HashSet::new();
     let mut updated = 0;
+    let scan_path = config.notes_path(vault_path);
 
-    for entry in WalkDir::new(vault_path)
+    for entry in WalkDir::new(&scan_path)
         .into_iter()
         .filter_entry(|e| !is_hidden(e))
     {
@@ -197,9 +198,10 @@ pub fn update_note(store: &Store, path: &Path, link_syntax: crate::config::LinkS
 /// Load all notes as parsed Note structs
 pub fn load_notes(vault_path: &Path) -> Result<Vec<note::Note>> {
     let config = Config::load(vault_path)?;
+    let scan_path = config.notes_path(vault_path);
     let mut notes = Vec::new();
 
-    for entry in WalkDir::new(vault_path)
+    for entry in WalkDir::new(&scan_path)
         .into_iter()
         .filter_entry(|e| !is_hidden(e))
     {

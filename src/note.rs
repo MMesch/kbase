@@ -295,17 +295,6 @@ pub fn relative_path(from_dir: &Path, to_file: &Path) -> PathBuf {
     result
 }
 
-/// Find the git repository root by walking up from a path
-pub fn find_git_root(from: &Path) -> Option<PathBuf> {
-    let mut current = if from.is_file() { from.parent()? } else { from };
-    loop {
-        if current.join(".git").exists() {
-            return Some(current.to_path_buf());
-        }
-        current = current.parent()?;
-    }
-}
-
 /// Compute the link path for a note based on the configured link_base
 pub fn link_path(
     note_path: &Path,
@@ -327,35 +316,34 @@ pub fn link_path(
                 note_path.to_string_lossy().to_string()
             }
         }
-        config::LinkBase::Git => {
-            if let Some(git_root) = find_git_root(current_file) {
-                note_path.strip_prefix(&git_root)
-                    .unwrap_or(note_path)
-                    .to_string_lossy().to_string()
-            } else if let Some(root) = vault_root {
-                note_path.strip_prefix(root)
-                    .unwrap_or(note_path)
-                    .to_string_lossy().to_string()
-            } else {
-                note_path.to_string_lossy().to_string()
-            }
-        }
     }
 }
 
-/// Resolve a markdown link target to a note path.
-/// Given a link target (e.g. "../notes/foo.md" or "foo.md") and the current file,
-/// find the matching note in the list.
+/// Resolve a markdown link target to a note.
+/// Tries resolving relative to the current file first, then relative to vault root.
 pub fn resolve_link_target<'a>(
     target: &str,
     current_file: &Path,
     notes: &'a [Note],
+    vault_root: Option<&Path>,
 ) -> Option<&'a Note> {
-    let current_dir = current_file.parent()?;
-    let resolved = current_dir.join(target).canonicalize().ok()?;
-    notes.iter().find(|n| {
-        n.path.canonicalize().ok().as_ref() == Some(&resolved)
-    })
+    // Try relative to current file
+    if let Some(current_dir) = current_file.parent() {
+        if let Ok(resolved) = current_dir.join(target).canonicalize() {
+            if let Some(note) = notes.iter().find(|n| n.path.canonicalize().ok().as_ref() == Some(&resolved)) {
+                return Some(note);
+            }
+        }
+    }
+    // Try relative to vault root
+    if let Some(root) = vault_root {
+        if let Ok(resolved) = root.join(target).canonicalize() {
+            if let Some(note) = notes.iter().find(|n| n.path.canonicalize().ok().as_ref() == Some(&resolved)) {
+                return Some(note);
+            }
+        }
+    }
+    None
 }
 
 /// Convert title to filename-safe slug
@@ -549,19 +537,4 @@ mod tests {
         assert_eq!(result, "sub/note.md");
     }
 
-    #[test]
-    fn find_git_root_from_subdir() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let root = find_git_root(&src);
-        // May be None in sandboxed builds (e.g. Nix)
-        if let Some(root) = root {
-            assert!(root.join(".git").exists());
-        }
-    }
-
-    #[test]
-    fn find_git_root_none() {
-        let result = find_git_root(Path::new("/"));
-        assert!(result.is_none());
-    }
 }

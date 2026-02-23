@@ -97,10 +97,9 @@ impl TreesConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LinkBase {
-    #[default]
     Relative, // Relative to current file (standard markdown)
-    Vault,    // Relative to vault root (.kbase directory)
-    Git,      // Relative to git repository root
+    #[default]
+    Vault, // Relative to vault root (.kbase directory)
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -109,6 +108,11 @@ pub struct Config {
     pub link_syntax: LinkSyntax,
     #[serde(default)]
     pub link_base: LinkBase,
+    /// Subdirectory containing notes (relative to vault root).
+    /// Only files under this directory are scanned for notes.
+    /// E.g. `notes_dir: knowledge` scans `<vault_root>/knowledge/**/*.md`
+    #[serde(default)]
+    pub notes_dir: Option<String>,
     #[serde(default)]
     pub embeddings: EmbeddingsConfig,
     #[serde(default)]
@@ -118,6 +122,14 @@ pub struct Config {
 }
 
 impl Config {
+    /// Directory to scan for notes. Returns `vault_path/notes_dir` if set, otherwise `vault_path`.
+    pub fn notes_path(&self, vault_path: &Path) -> std::path::PathBuf {
+        match &self.notes_dir {
+            Some(dir) => vault_path.join(dir),
+            None => vault_path.to_path_buf(),
+        }
+    }
+
     /// Load config from .kbase/config.yaml, or return defaults
     pub fn load(vault_path: &Path) -> Result<Self> {
         let config_path = vault_path.join(".kbase").join("config.yaml");
