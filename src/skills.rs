@@ -4,7 +4,7 @@ use std::path::Path;
 
 /// Install Claude Code skills to the current working directory
 pub fn install(_vault_path: &Path) -> Result<Vec<String>> {
-    let skills_dir = std::env::current_dir()?.join(".claude").join("skills");
+    let skills_dir = std::env::current_dir()?.join(".agents").join("skills");
     let mut installed = Vec::new();
 
     // Create each skill
