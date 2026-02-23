@@ -758,7 +758,7 @@ impl LanguageServer for KbaseLanguageServer {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Completion - suggest note titles
                 completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec!["[".to_string()]),
+                    trigger_characters: Some(vec!["[".to_string(), "(".to_string()]),
                     ..Default::default()
                 }),
                 // Workspace symbol search (semantic search via kbase search)
@@ -1040,7 +1040,7 @@ impl LanguageServer for KbaseLanguageServer {
                 }
 
                 // Check if we're inside [[
-                if before_cursor.ends_with("[[") || before_cursor.contains("[[") {
+                if before_cursor.ends_with("[[") || (before_cursor.contains("[[") && !before_cursor.contains("]]")) {
                     let notes = self.notes.read().unwrap();
                     let items: Vec<CompletionItem> = notes
                         .values()
@@ -1053,6 +1053,81 @@ impl LanguageServer for KbaseLanguageServer {
                         .collect();
 
                     return Ok(Some(CompletionResponse::Array(items)));
+                }
+
+                // Markdown link completion
+                if let Some(current_path) = &path {
+                    let vault_root = self.vault_path.read().unwrap().clone();
+                    let cfg = vault_root.as_ref()
+                        .and_then(|vp| Config::load(vp).ok())
+                        .unwrap_or_default();
+                    let after_cursor = &line[(position.character as usize).min(line.len())..];
+
+                    // Inside ]( — complete just the path
+                    if before_cursor.contains("](") && !before_cursor.contains(')') {
+                        let paren_pos = before_cursor.rfind("](").unwrap() + 2;
+                        let prefix = &before_cursor[paren_pos..];
+                        let notes = self.notes.read().unwrap();
+                        let items: Vec<CompletionItem> = notes
+                            .values()
+                            .filter(|n| n.path != *current_path)
+                            .filter_map(|note| {
+                                let rel_str = note::link_path(&note.path, current_path, cfg.link_base, vault_root.as_deref());
+                                if !prefix.is_empty() && !rel_str.contains(prefix) && !note.title.to_lowercase().contains(&prefix.to_lowercase()) {
+                                    return None;
+                                }
+                                let replace_range = Range {
+                                    start: Position { line: position.line, character: paren_pos as u32 },
+                                    end: Position { line: position.line, character: position.character },
+                                };
+                                Some(CompletionItem {
+                                    label: note.title.clone(),
+                                    kind: Some(CompletionItemKind::FILE),
+                                    detail: Some(rel_str.clone()),
+                                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                                        range: replace_range,
+                                        new_text: rel_str,
+                                    })),
+                                    ..Default::default()
+                                })
+                            })
+                            .collect();
+
+                        return Ok(Some(CompletionResponse::Array(items)));
+                    }
+
+                    // Typing [ (but not [[) — complete full [Title](path.md)
+                    if before_cursor.ends_with('[') && !before_cursor.ends_with("[[") {
+                        // Don't trigger if we're already inside a closed link
+                        if !after_cursor.starts_with('[') {
+                            let bracket_col = (position.character - 1) as u32;
+                            let notes = self.notes.read().unwrap();
+                            let items: Vec<CompletionItem> = notes
+                                .values()
+                                .filter(|n| n.path != *current_path)
+                                .map(|note| {
+                                    let rel_str = note::link_path(&note.path, current_path, cfg.link_base, vault_root.as_deref());
+                                    let new_text = format!("[{}]({})", note.title, rel_str);
+                                    let replace_range = Range {
+                                        start: Position { line: position.line, character: bracket_col },
+                                        end: Position { line: position.line, character: position.character },
+                                    };
+                                    CompletionItem {
+                                        label: note.title.clone(),
+                                        kind: Some(CompletionItemKind::FILE),
+                                        detail: Some(rel_str),
+                                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                                            range: replace_range,
+                                            new_text,
+                                        })),
+                                        ..Default::default()
+                                    }
+                                })
+                                .collect();
+
+                            return Ok(Some(CompletionResponse::Array(items)));
+                        }
+                    }
                 }
             }
         }

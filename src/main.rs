@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 
@@ -181,12 +181,13 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Convert links between wiki and markdown syntax
+    /// Convert links between wiki and markdown syntax, or normalize link paths
     ///
-    /// Wiki:     [[Note Title]] or [[Note Title|alias]]
-    /// Markdown: [Note Title](note-title.md) or [alias](note-title.md)
+    /// Wiki:      [[Note Title]] or [[Note Title|alias]]
+    /// Markdown:  [Note Title](note-title.md) or [alias](note-title.md)
+    /// Normalize: rewrite markdown link paths using the configured link_base
     Convert {
-        /// Target syntax: "wiki" or "markdown"
+        /// Target syntax: "wiki", "markdown", or "normalize"
         to: String,
         /// Dry run - show changes without modifying files
         #[arg(long)]
@@ -835,28 +836,30 @@ fn main() -> Result<()> {
         Commands::Convert { to, dry_run } => {
             let vault_path = get_vault()?;
             let notes = vault::load_notes(&vault_path)?;
+            let cfg = config::Config::load(&vault_path)?;
 
-            let to_markdown = match to.to_lowercase().as_str() {
-                "markdown" | "md" => true,
-                "wiki" => false,
-                _ => anyhow::bail!("Unknown target syntax: {}. Use 'wiki' or 'markdown'", to),
+            enum ConvertMode { ToMarkdown, ToWiki, Normalize }
+            let mode = match to.to_lowercase().as_str() {
+                "markdown" | "md" => ConvertMode::ToMarkdown,
+                "wiki" => ConvertMode::ToWiki,
+                "normalize" | "norm" => ConvertMode::Normalize,
+                _ => anyhow::bail!("Unknown target: {}. Use 'wiki', 'markdown', or 'normalize'", to),
             };
 
             let mut total_changes = 0;
 
             for n in &notes {
                 let content = std::fs::read_to_string(&n.path)?;
-                let new_content = if to_markdown {
-                    convert_wiki_to_markdown(&content, &notes)
-                } else {
-                    convert_markdown_to_wiki(&content)
+                let new_content = match &mode {
+                    ConvertMode::ToMarkdown => convert_wiki_to_markdown(&content, &notes),
+                    ConvertMode::ToWiki => convert_markdown_to_wiki(&content),
+                    ConvertMode::Normalize => normalize_markdown_links(&content, &n.path, &notes, &vault_path, cfg.link_base),
                 };
 
                 if content != new_content {
                     total_changes += 1;
                     if dry_run {
                         println!("Would modify: {}", n.path.display());
-                        // Show diff-like output
                         for (i, (old, new)) in content.lines().zip(new_content.lines()).enumerate() {
                             if old != new {
                                 println!("  L{}: {} -> {}", i + 1, old.trim(), new.trim());
@@ -953,6 +956,39 @@ fn convert_wiki_to_markdown(content: &str, notes: &[note::Note]) -> String {
             .unwrap_or_else(|| note::slugify(title));
 
         format!("[{}]({}.md)", display, slug)
+    })
+    .to_string()
+}
+
+/// Normalize markdown link paths using the configured link_base
+fn normalize_markdown_links(
+    content: &str,
+    current_file: &Path,
+    notes: &[note::Note],
+    vault_path: &Path,
+    link_base: config::LinkBase,
+) -> String {
+    use regex::Regex;
+
+    let re = Regex::new(r"\[([^\]]+)\]\(([^)]+\.md)\)").unwrap();
+
+    re.replace_all(content, |caps: &regex::Captures| {
+        let text = &caps[1];
+        let target = &caps[2];
+
+        // Skip external links
+        if target.starts_with("http") {
+            return caps[0].to_string();
+        }
+
+        // Try to resolve the link target to a known note
+        if let Some(resolved_note) = note::resolve_link_target(target, current_file, notes) {
+            let new_path = note::link_path(&resolved_note.path, current_file, link_base, Some(vault_path));
+            format!("[{}]({})", text, new_path)
+        } else {
+            // Can't resolve — leave as-is
+            caps[0].to_string()
+        }
     })
     .to_string()
 }

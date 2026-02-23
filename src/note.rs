@@ -3,10 +3,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
-use crate::config::LinkSyntax;
+use crate::config::{self, LinkSyntax};
 use crate::schema::Schema;
 
 /// A link in a note with position information
@@ -279,6 +279,85 @@ fn extract_links(body: &str, syntax: LinkSyntax, body_start_line: u32) -> Vec<Li
     links
 }
 
+/// Compute a relative path from `from_dir` to `to_file`
+pub fn relative_path(from_dir: &Path, to_file: &Path) -> PathBuf {
+    let from: Vec<Component> = from_dir.components().collect();
+    let to: Vec<Component> = to_file.components().collect();
+    let common = from.iter().zip(to.iter()).take_while(|(a, b)| a == b).count();
+
+    let mut result = PathBuf::new();
+    for _ in common..from.len() {
+        result.push("..");
+    }
+    for comp in &to[common..] {
+        result.push(comp);
+    }
+    result
+}
+
+/// Find the git repository root by walking up from a path
+pub fn find_git_root(from: &Path) -> Option<PathBuf> {
+    let mut current = if from.is_file() { from.parent()? } else { from };
+    loop {
+        if current.join(".git").exists() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+}
+
+/// Compute the link path for a note based on the configured link_base
+pub fn link_path(
+    note_path: &Path,
+    current_file: &Path,
+    link_base: config::LinkBase,
+    vault_root: Option<&Path>,
+) -> String {
+    match link_base {
+        config::LinkBase::Relative => {
+            let current_dir = current_file.parent().unwrap_or(current_file);
+            relative_path(current_dir, note_path).to_string_lossy().to_string()
+        }
+        config::LinkBase::Vault => {
+            if let Some(root) = vault_root {
+                note_path.strip_prefix(root)
+                    .unwrap_or(note_path)
+                    .to_string_lossy().to_string()
+            } else {
+                note_path.to_string_lossy().to_string()
+            }
+        }
+        config::LinkBase::Git => {
+            if let Some(git_root) = find_git_root(current_file) {
+                note_path.strip_prefix(&git_root)
+                    .unwrap_or(note_path)
+                    .to_string_lossy().to_string()
+            } else if let Some(root) = vault_root {
+                note_path.strip_prefix(root)
+                    .unwrap_or(note_path)
+                    .to_string_lossy().to_string()
+            } else {
+                note_path.to_string_lossy().to_string()
+            }
+        }
+    }
+}
+
+/// Resolve a markdown link target to a note path.
+/// Given a link target (e.g. "../notes/foo.md" or "foo.md") and the current file,
+/// find the matching note in the list.
+pub fn resolve_link_target<'a>(
+    target: &str,
+    current_file: &Path,
+    notes: &'a [Note],
+) -> Option<&'a Note> {
+    let current_dir = current_file.parent()?;
+    let resolved = current_dir.join(target).canonicalize().ok()?;
+    notes.iter().find(|n| {
+        n.path.canonicalize().ok().as_ref() == Some(&resolved)
+    })
+}
+
 /// Convert title to filename-safe slug
 pub fn slugify(s: &str) -> String {
     s.to_lowercase()
@@ -424,5 +503,63 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].tree, "domain");
         assert_eq!(edges[0].parent, "llms");
+    }
+
+    #[test]
+    fn relative_path_same_dir() {
+        let from = Path::new("/vault/notes");
+        let to = Path::new("/vault/notes/foo.md");
+        assert_eq!(relative_path(from, to), PathBuf::from("foo.md"));
+    }
+
+    #[test]
+    fn relative_path_sibling_dir() {
+        let from = Path::new("/vault/notes/a");
+        let to = Path::new("/vault/notes/b/foo.md");
+        assert_eq!(relative_path(from, to), PathBuf::from("../b/foo.md"));
+    }
+
+    #[test]
+    fn relative_path_parent_dir() {
+        let from = Path::new("/vault/notes/a/b");
+        let to = Path::new("/vault/notes/foo.md");
+        assert_eq!(relative_path(from, to), PathBuf::from("../../foo.md"));
+    }
+
+    #[test]
+    fn relative_path_child_dir() {
+        let from = Path::new("/vault");
+        let to = Path::new("/vault/sub/deep/foo.md");
+        assert_eq!(relative_path(from, to), PathBuf::from("sub/deep/foo.md"));
+    }
+
+    #[test]
+    fn link_path_relative_mode() {
+        let note = Path::new("/vault/sub/note.md");
+        let current = Path::new("/vault/other/current.md");
+        let result = link_path(note, current, config::LinkBase::Relative, Some(Path::new("/vault")));
+        assert_eq!(result, "../sub/note.md");
+    }
+
+    #[test]
+    fn link_path_vault_mode() {
+        let note = Path::new("/vault/sub/note.md");
+        let current = Path::new("/vault/other/current.md");
+        let result = link_path(note, current, config::LinkBase::Vault, Some(Path::new("/vault")));
+        assert_eq!(result, "sub/note.md");
+    }
+
+    #[test]
+    fn find_git_root_from_subdir() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let root = find_git_root(&src);
+        assert!(root.is_some());
+        assert!(root.unwrap().join(".git").exists());
+    }
+
+    #[test]
+    fn find_git_root_none() {
+        let result = find_git_root(Path::new("/"));
+        assert!(result.is_none());
     }
 }
