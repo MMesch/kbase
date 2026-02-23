@@ -175,6 +175,20 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Rename tags by replacing a prefix across all notes
+    ///
+    /// Examples:
+    ///   kbase retag tech/ai type       # tech/ai -> type, tech/ai/ml -> type/ml
+    ///   kbase retag old/path new/path   # old/path/x -> new/path/x
+    Retag {
+        /// Old tag prefix to replace
+        from: String,
+        /// New tag prefix
+        to: String,
+        /// Preview changes without modifying files
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Clean orphan tags (tags in graph with no notes)
     CleanTags {
         /// Preview without deleting
@@ -818,6 +832,43 @@ fn main() -> Result<()> {
                 println!("\n{} files {}", moves.len(), if dry_run { "would be moved" } else { "moved" });
             }
         }
+        Commands::Retag { from, to, dry_run } => {
+            let vault_path = get_vault()?;
+            let notes = vault::load_notes(&vault_path)?;
+
+            let mut total_changes = 0;
+
+            for n in &notes {
+                // Only process notes that have a matching tag
+                if !n.tags.iter().any(|t| t == &from || t.starts_with(&format!("{}/", from))) {
+                    continue;
+                }
+
+                let content = std::fs::read_to_string(&n.path)?;
+                let new_content = retag_frontmatter(&content, &from, &to);
+
+                if content != new_content {
+                    total_changes += 1;
+                    if dry_run {
+                        println!("Would modify: {}", n.path.display());
+                        for (i, (old, new)) in content.lines().zip(new_content.lines()).enumerate() {
+                            if old != new {
+                                println!("  L{}: {} -> {}", i + 1, old.trim(), new.trim());
+                            }
+                        }
+                    } else {
+                        std::fs::write(&n.path, &new_content)?;
+                        println!("Modified: {}", n.path.display());
+                    }
+                }
+            }
+
+            if dry_run {
+                println!("\n{} files would be modified", total_changes);
+            } else {
+                println!("\n{} files modified", total_changes);
+            }
+        }
         Commands::CleanTags { dry_run } => {
             let vault_path = get_vault()?;
 
@@ -1059,6 +1110,103 @@ fn convert_markdown_to_wiki(content: &str) -> String {
     .to_string()
 }
 
+/// Replace a tag prefix in frontmatter, preserving formatting.
+/// Handles block-style `tags:\n  - foo` and flow-style `tags: [foo, bar]`.
+fn retag_frontmatter(content: &str, from: &str, to: &str) -> String {
+    // Find frontmatter boundaries
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return content.to_string();
+    }
+    let offset = content.len() - trimmed.len();
+    let rest = &trimmed[3..];
+    let Some(end) = rest.find("\n---") else {
+        return content.to_string();
+    };
+
+    let fm_start = offset + 3;
+    let fm_end = fm_start + end;
+    let frontmatter = &content[fm_start..fm_end];
+
+    let from_slash = format!("{}/", from);
+    let mut new_fm = String::with_capacity(frontmatter.len());
+    let mut in_tags = false;
+
+    for line in frontmatter.lines() {
+        let trimmed_line = line.trim();
+
+        // Detect start of tags field
+        if trimmed_line.starts_with("tags:") {
+            in_tags = true;
+
+            // Flow style: tags: [foo, bar]
+            if let Some(bracket_start) = line.find('[') {
+                if let Some(bracket_end) = line.find(']') {
+                    let items = &line[bracket_start + 1..bracket_end];
+                    let new_items: Vec<String> = items
+                        .split(',')
+                        .map(|item| {
+                            let t = item.trim();
+                            if t == from {
+                                to.to_string()
+                            } else if let Some(rest) = t.strip_prefix(&from_slash) {
+                                format!("{}/{}", to, rest)
+                            } else {
+                                t.to_string()
+                            }
+                        })
+                        .collect();
+                    new_fm.push_str(&line[..bracket_start + 1]);
+                    new_fm.push_str(&new_items.join(", "));
+                    new_fm.push_str(&line[bracket_end..]);
+                    new_fm.push('\n');
+                    continue;
+                }
+            }
+            new_fm.push_str(line);
+            new_fm.push('\n');
+            continue;
+        }
+
+        // Block style tag item: "  - value"
+        if in_tags && trimmed_line.starts_with("- ") {
+            let dash_pos = line.find("- ").unwrap();
+            let tag = trimmed_line[2..].trim();
+            let new_tag = if tag == from {
+                to.to_string()
+            } else if let Some(rest) = tag.strip_prefix(&from_slash) {
+                format!("{}/{}", to, rest)
+            } else {
+                tag.to_string()
+            };
+            new_fm.push_str(&line[..dash_pos]);
+            new_fm.push_str("- ");
+            new_fm.push_str(&new_tag);
+            new_fm.push('\n');
+            continue;
+        }
+
+        // Any other field ends the tags section
+        if in_tags && !trimmed_line.is_empty() && !trimmed_line.starts_with('#') {
+            in_tags = false;
+        }
+
+        new_fm.push_str(line);
+        new_fm.push('\n');
+    }
+
+    // Remove trailing newline (we'll reconstruct with the original boundaries)
+    if new_fm.ends_with('\n') {
+        new_fm.pop();
+    }
+
+    let mut result = String::with_capacity(content.len());
+    result.push_str(&content[..fm_start]);
+    result.push_str(&new_fm);
+    result.push_str(&content[fm_end..]);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1106,6 +1254,35 @@ mod tests {
         let content = "See [website](https://example.com) for details.";
         let result = convert_markdown_to_wiki(content);
         assert_eq!(result, content);  // Should not convert http links
+    }
+
+    #[test]
+    fn retag_block_style() {
+        let content = "---\ntitle: Test\ntags:\n  - tech/ai\n  - tech/ai/ml\n  - other\n---\nBody text\n";
+        let result = retag_frontmatter(content, "tech/ai", "type");
+        assert_eq!(result, "---\ntitle: Test\ntags:\n  - type\n  - type/ml\n  - other\n---\nBody text\n");
+    }
+
+    #[test]
+    fn retag_flow_style() {
+        let content = "---\ntitle: Test\ntags: [tech/ai, tech/ai/ml, other]\n---\nBody\n";
+        let result = retag_frontmatter(content, "tech/ai", "type");
+        assert_eq!(result, "---\ntitle: Test\ntags: [type, type/ml, other]\n---\nBody\n");
+    }
+
+    #[test]
+    fn retag_no_match() {
+        let content = "---\ntitle: Test\ntags:\n  - other\n---\nBody\n";
+        let result = retag_frontmatter(content, "tech/ai", "type");
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn retag_preserves_body() {
+        let content = "---\ntags:\n  - tech/ai\n---\nBody with tech/ai text\n";
+        let result = retag_frontmatter(content, "tech/ai", "type");
+        assert!(result.contains("- type\n"));
+        assert!(result.contains("Body with tech/ai text"));
     }
 }
 
