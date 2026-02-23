@@ -935,13 +935,13 @@ impl LanguageServer for KbaseLanguageServer {
             }
         };
 
-        // Get link syntax from config (default to WikiLink)
+        // Get link syntax from config
         let vault_path = self.vault_path.read().unwrap().clone();
         let link_syntax = vault_path
             .as_ref()
             .and_then(|vp| Config::load(vp).ok())
             .map(|c| c.link_syntax)
-            .unwrap_or(crate::config::LinkSyntax::Wiki);
+            .unwrap_or_default();
 
         // Parse the current file directly to get its title
         let current_note = match note::parse(&path, link_syntax) {

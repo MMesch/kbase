@@ -52,8 +52,8 @@ pub fn load(vault_path: &Path) -> Result<Store> {
 pub fn load_with_backend(vault_path: &Path, backend: StoreBackend) -> Result<Store> {
     match backend {
         StoreBackend::Fresh => load_fresh(vault_path),
-        StoreBackend::Ntriples => {
-            let (store, _) = load_ntriples(vault_path)?;
+        StoreBackend::Nquads => {
+            let (store, _) = load_nquads(vault_path)?;
             Ok(store)
         }
         StoreBackend::Rocksdb => {
@@ -75,9 +75,9 @@ pub fn load_fresh(vault_path: &Path) -> Result<Store> {
     Ok(store)
 }
 
-/// Load using N-Triples cache (fast startup, ~5ms)
+/// Load using N-Quads cache (fast startup, ~5ms)
 /// Returns the store and the number of notes updated
-pub fn load_ntriples(vault_path: &Path) -> Result<(Store, usize)> {
+pub fn load_nquads(vault_path: &Path) -> Result<(Store, usize)> {
     let cache_path = vault_path.join(KBASE_DIR).join(GRAPH_NQ);
     let store = Store::new_with_cache(&cache_path)?;
     let config = Config::load(vault_path)?;
@@ -163,9 +163,17 @@ fn sync_store_with_files(store: &Store, vault_path: &Path, config: &Config) -> R
     Ok(updated)
 }
 
-/// Backward compat: alias for load_rocksdb
+/// Load vault using the configured backend, returning the store and update count
 pub fn load_persistent(vault_path: &Path) -> Result<(Store, usize)> {
-    load_rocksdb(vault_path)
+    let config = Config::load(vault_path)?;
+    match config.store {
+        StoreBackend::Nquads => load_nquads(vault_path),
+        StoreBackend::Rocksdb => load_rocksdb(vault_path),
+        StoreBackend::Fresh => {
+            let store = load_fresh(vault_path)?;
+            Ok((store, 0))
+        }
+    }
 }
 
 /// Update a single note in the persistent store

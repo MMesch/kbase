@@ -14,7 +14,7 @@ struct Cli {
     #[arg(short, long, global = true)]
     vault: Option<PathBuf>,
 
-    /// Store backend: ntriples (fast, default), rocksdb (slow), fresh (no cache)
+    /// Store backend: nquads (fast, default), rocksdb (slow), fresh (no cache)
     #[arg(long, global = true, value_enum)]
     store: Option<StoreBackendArg>,
 
@@ -28,8 +28,8 @@ struct Cli {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum StoreBackendArg {
-    /// N-Triples file cache (fast startup, ~5ms)
-    Ntriples,
+    /// N-Quads file cache (fast startup, ~5ms)
+    Nquads,
     /// RocksDB persistent store (slow startup, ~400ms)
     Rocksdb,
     /// Fresh in-memory, rebuild from files each time
@@ -39,7 +39,7 @@ enum StoreBackendArg {
 impl From<StoreBackendArg> for StoreBackend {
     fn from(arg: StoreBackendArg) -> Self {
         match arg {
-            StoreBackendArg::Ntriples => StoreBackend::Ntriples,
+            StoreBackendArg::Nquads => StoreBackend::Nquads,
             StoreBackendArg::Rocksdb => StoreBackend::Rocksdb,
             StoreBackendArg::Fresh => StoreBackend::Fresh,
         }

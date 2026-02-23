@@ -3,3 +3,4 @@
 *.redb
 result
 graph.db/
+graph.nq

@@ -10,10 +10,10 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LinkSyntax {
-    #[default]
-    Wiki, // [[target]]
+    Wiki,     // [[target]]
     Markdown, // [text](path)
-    Both,     // recognize both
+    #[default]
+    Both, // recognize both
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -43,7 +43,8 @@ pub enum EmbeddingBackend {
 #[serde(rename_all = "lowercase")]
 pub enum StoreBackend {
     #[default]
-    Ntriples, // In-memory + N-Triples file (fast startup, ~5ms)
+    #[serde(alias = "ntriples")]
+    Nquads, // In-memory + N-Quads file (fast startup, ~5ms)
     Rocksdb,  // Oxigraph persistent store (slow startup, ~400ms)
     Fresh,    // In-memory only, rebuild from files each time
 }

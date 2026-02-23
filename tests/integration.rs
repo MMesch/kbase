@@ -334,19 +334,23 @@ fn persistent_store_removes_notes() {
     cleanup_temp_db(&db_path);
 }
 
-#[test]
-fn load_persistent_does_incremental_update() {
-    // Use a temp copy of specs to avoid locking the real vault
-    let temp_vault = env::temp_dir().join(format!("kbase-vault-test-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&temp_vault); // Clean up any previous run
+/// Copy a vault directory to a temp location, skipping store cache files
+fn copy_vault_to_temp(name: &str) -> PathBuf {
+    let temp_vault = env::temp_dir().join(format!("kbase-{}-{}", name, std::process::id()));
+    let _ = fs::remove_dir_all(&temp_vault);
 
-    // Copy specs to temp location
     fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) {
         fs::create_dir_all(dst).unwrap();
         for entry in fs::read_dir(src).unwrap() {
             let entry = entry.unwrap();
             let src_path = entry.path();
             let dst_path = dst.join(entry.file_name());
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Skip store cache files so we start fresh
+            if name_str == "graph.db" || name_str == "graph.nq" {
+                continue;
+            }
             if src_path.is_dir() {
                 copy_dir_recursive(&src_path, &dst_path);
             } else {
@@ -355,26 +359,56 @@ fn load_persistent_does_incremental_update() {
         }
     }
     copy_dir_recursive(&specs_path(), &temp_vault);
+    temp_vault
+}
+
+#[test]
+fn load_nquads_does_incremental_update() {
+    let temp_vault = copy_vault_to_temp("nquads-test");
 
     // First load - should process all notes
     let notes_count;
     {
-        let (store1, updated1) = vault::load_persistent(&temp_vault).expect("Failed to load");
+        let (store1, updated1) = vault::load_nquads(&temp_vault).expect("Failed to load");
         let notes1 = store1.list_notes(None, false).expect("Failed to list");
         assert!(!notes1.is_empty(), "Should have loaded notes");
         assert!(updated1 > 0, "First load should update notes");
         notes_count = notes1.len();
-    } // store1 dropped here, releasing lock
+    }
 
     // Second load - nothing changed, should update 0
     {
-        let (store2, updated2) = vault::load_persistent(&temp_vault).expect("Failed to reload");
+        let (store2, updated2) = vault::load_nquads(&temp_vault).expect("Failed to reload");
         let notes2 = store2.list_notes(None, false).expect("Failed to list");
         assert_eq!(notes_count, notes2.len(), "Should have same notes");
         assert_eq!(updated2, 0, "Second load should update 0 notes (nothing changed)");
     }
 
-    // Cleanup
+    let _ = fs::remove_dir_all(&temp_vault);
+}
+
+#[test]
+fn load_rocksdb_does_incremental_update() {
+    let temp_vault = copy_vault_to_temp("rocksdb-test");
+
+    // First load - should process all notes
+    let notes_count;
+    {
+        let (store1, updated1) = vault::load_rocksdb(&temp_vault).expect("Failed to load");
+        let notes1 = store1.list_notes(None, false).expect("Failed to list");
+        assert!(!notes1.is_empty(), "Should have loaded notes");
+        assert!(updated1 > 0, "First load should update notes");
+        notes_count = notes1.len();
+    }
+
+    // Second load - nothing changed, should update 0
+    {
+        let (store2, updated2) = vault::load_rocksdb(&temp_vault).expect("Failed to reload");
+        let notes2 = store2.list_notes(None, false).expect("Failed to list");
+        assert_eq!(notes_count, notes2.len(), "Should have same notes");
+        assert_eq!(updated2, 0, "Second load should update 0 notes (nothing changed)");
+    }
+
     let _ = fs::remove_dir_all(&temp_vault);
 }
 

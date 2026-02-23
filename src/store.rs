@@ -17,7 +17,7 @@ const KBASE_NS: &str = "http://kbase.local/";
 
 pub struct Store {
     inner: OxiStore,
-    /// Path to N-Triples cache file (if using ntriples backend)
+    /// Path to N-Quads cache file (if using nquads backend)
     cache_path: Option<PathBuf>,
     /// Whether the store has been modified since last save
     dirty: AtomicBool,
@@ -34,7 +34,7 @@ impl Store {
         })
     }
 
-    /// Create an in-memory store with N-Triples file persistence
+    /// Create an in-memory store with N-Quads file persistence
     /// Loads existing data from the cache file if it exists
     pub fn new_with_cache(cache_path: &Path) -> Result<Self> {
         let inner = OxiStore::new()?;
@@ -67,7 +67,7 @@ impl Store {
         })
     }
 
-    /// Save to N-Triples cache file (if configured)
+    /// Save to N-Quads cache file (if configured)
     pub fn save(&self) -> Result<()> {
         if let Some(ref cache_path) = self.cache_path {
             if self.dirty.load(Ordering::Relaxed) {
