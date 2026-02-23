@@ -924,7 +924,16 @@ impl LanguageServer for KbaseLanguageServer {
                         // For markdown links, search by slug first, then by title
                         let note = self.find_note_by_slug(slug)
                             .or_else(|| self.find_note_by_title(&slug_to_title(slug)));
-                        (note, slug_to_title(slug))
+                        // Preserve path structure for creation (e.g. "sub/note-name")
+                        let slug_no_ext = slug.strip_suffix(".md").unwrap_or(slug);
+                        let create_title = if slug_no_ext.contains('/') {
+                            // Keep path, title-case the leaf: "sub/My Note"
+                            let (dir, leaf) = slug_no_ext.rsplit_once('/').unwrap();
+                            format!("{}/{}", dir, slug_to_title(leaf))
+                        } else {
+                            slug_to_title(slug_no_ext)
+                        };
+                        (note, create_title)
                     }
                 };
 

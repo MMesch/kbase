@@ -147,12 +147,20 @@ fn extract_tree_edges(
 
 /// Create a new note with the given title
 pub fn create(vault_path: &Path, title: &str) -> Result<PathBuf> {
-    let filename = slugify(title);
-    let note_path = vault_path.join(format!("{}.md", filename));
+    let (subdir, leaf_title) = split_title_path(title);
+    let filename = slugify(&leaf_title);
+    let note_dir = match subdir {
+        Some(dir) => vault_path.join(dir),
+        None => vault_path.to_path_buf(),
+    };
+    let note_path = note_dir.join(format!("{}.md", filename));
 
     if note_path.exists() {
         bail!("Note already exists: {}", note_path.display());
     }
+
+    fs::create_dir_all(&note_dir)
+        .with_context(|| format!("Failed to create directory {}", note_dir.display()))?;
 
     let content = format!(
         r#"---
@@ -161,7 +169,7 @@ tags: []
 ---
 # {}
 "#,
-        title, title
+        leaf_title, leaf_title
     );
 
     fs::write(&note_path, content)
@@ -172,25 +180,48 @@ tags: []
 
 /// Create a new note with schema-based frontmatter template
 pub fn create_with_schema(vault_path: &Path, title: &str) -> Result<PathBuf> {
-    let filename = slugify(title);
-    let note_path = vault_path.join(format!("{}.md", filename));
+    let (subdir, leaf_title) = split_title_path(title);
+    let filename = slugify(&leaf_title);
+    let note_dir = match subdir {
+        Some(dir) => vault_path.join(dir),
+        None => vault_path.to_path_buf(),
+    };
+    let note_path = note_dir.join(format!("{}.md", filename));
 
     if note_path.exists() {
         bail!("Note already exists: {}", note_path.display());
     }
 
+    fs::create_dir_all(&note_dir)
+        .with_context(|| format!("Failed to create directory {}", note_dir.display()))?;
+
     let schema = Schema::load(vault_path)?;
-    let frontmatter = schema.generate_frontmatter(title);
+    let frontmatter = schema.generate_frontmatter(&leaf_title);
 
     let content = format!(
         "---\n{}\n---\n\n# {}\n",
-        frontmatter, title
+        frontmatter, leaf_title
     );
 
     fs::write(&note_path, content)
         .with_context(|| format!("Failed to write {}", note_path.display()))?;
 
     Ok(note_path)
+}
+
+/// Split a title that may contain path separators into (subdir, leaf_title).
+/// "/subfolder/My Note" -> (Some("subfolder"), "My Note")
+/// "subfolder/My Note"  -> (Some("subfolder"), "My Note")
+/// "My Note"            -> (None, "My Note")
+fn split_title_path(title: &str) -> (Option<&str>, String) {
+    let title = title.trim_start_matches('/');
+    if let Some(pos) = title.rfind('/') {
+        let dir = &title[..pos];
+        let leaf = &title[pos + 1..];
+        (Some(dir), leaf.to_string())
+    } else {
+        (None, title.to_string())
+    }
 }
 
 /// Split content into frontmatter and body
