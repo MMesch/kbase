@@ -692,6 +692,8 @@ fn main() -> Result<()> {
         }
         Commands::Organize { tree, flat, symlinks, dry_run } => {
             let vault_path = get_vault()?;
+            let cfg = config::Config::load(&vault_path)?;
+            let notes_base = cfg.notes_path(&vault_path);
             let notes = vault::load_notes(&vault_path)?;
 
             // Build a map of note paths to their target locations
@@ -723,14 +725,14 @@ fn main() -> Result<()> {
                 let primary_tag = matching_tags[0];
 
                 let target_path = if flat {
-                    // Flat: keep in vault root
+                    // Flat: keep in notes root
                     let filename = n.path.file_name().unwrap();
-                    vault_path.join(filename)
+                    notes_base.join(filename)
                 } else {
                     // Tree: create directory structure from tag
                     let tag_path: PathBuf = primary_tag.split('/').collect();
                     let filename = n.path.file_name().unwrap();
-                    vault_path.join(tag_path).join(filename)
+                    notes_base.join(tag_path).join(filename)
                 };
 
                 if target_path != n.path {
@@ -806,10 +808,10 @@ fn main() -> Result<()> {
                             let primary_tag = &tags[0];
                             for secondary_tag in &tags[1..] {
                                 let symlink_dir: PathBuf = secondary_tag.split('/').collect();
-                                let symlink_path = vault_path.join(symlink_dir).join(n.path.file_name().unwrap());
+                                let symlink_path = notes_base.join(symlink_dir).join(n.path.file_name().unwrap());
 
                                 let primary_dir: PathBuf = primary_tag.split('/').collect();
-                                let target = vault_path.join(primary_dir).join(n.path.file_name().unwrap());
+                                let target = notes_base.join(primary_dir).join(n.path.file_name().unwrap());
 
                                 println!("  {} -> {}", symlink_path.display(), target.display());
 
