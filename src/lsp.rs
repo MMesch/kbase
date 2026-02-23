@@ -514,7 +514,7 @@ impl KbaseLanguageServer {
 
         // Check if we're in frontmatter
         let mut in_frontmatter = false;
-        let mut frontmatter_end = 0;
+        let mut frontmatter_end = usize::MAX;
         for (i, line) in lines.iter().enumerate() {
             if i == 0 && line.trim() == "---" {
                 in_frontmatter = true;
@@ -526,35 +526,39 @@ impl KbaseLanguageServer {
             }
         }
 
-        if line_idx == 0 || line_idx >= frontmatter_end {
+        if !in_frontmatter || line_idx == 0 || line_idx >= frontmatter_end {
             return None;
         }
 
         let line = lines.get(line_idx)?;
+        let before_cursor = &line[..col.min(line.len())];
         let trimmed = line.trim();
         let indent = line.len() - trimmed.len();
 
         // Pattern 1: "  - prefix" (list item in tags array)
-        if trimmed.starts_with("- ") {
+        // Also match "  -" without space (user hasn't typed space yet) or "  - " (empty prefix)
+        if trimmed.starts_with("- ") || trimmed == "-" {
             for i in (0..line_idx).rev() {
                 let prev = lines[i].trim();
                 if prev == "tags:" || prev.starts_with("tags:") {
-                    // Prefix starts after "- " in the trimmed line
-                    let prefix_start = indent + 2;
-                    let prefix = &line[prefix_start..col.min(line.len())];
-                    return Some((prefix.to_string(), prefix_start as u32));
+                    let dash_end = before_cursor.find("- ").map(|p| p + 2)
+                        .or_else(|| before_cursor.find('-').map(|p| p + 1));
+                    if let Some(prefix_start) = dash_end {
+                        let prefix_start = prefix_start.min(col);
+                        let prefix = &line[prefix_start..col.min(line.len())];
+                        return Some((prefix.trim().to_string(), prefix_start as u32));
+                    }
+                    return Some((String::new(), col as u32));
                 }
-                if !prev.starts_with("- ") && !prev.is_empty() {
+                if !prev.starts_with("- ") && prev != "-" && !prev.is_empty() {
                     break;
                 }
             }
         }
 
-        // Pattern 2: "tags: [prefix" or inside array
+        // Pattern 2: "tags: [prefix" or inside inline array
         if trimmed.starts_with("tags:") && trimmed.contains('[') {
-            let before_cursor = &line[..col.min(line.len())];
-            if let Some(bracket_pos) = before_cursor.rfind(|c| c == '[' || c == ',') {
-                // Find where actual content starts (skip whitespace after [ or ,)
+            if let Some(bracket_pos) = before_cursor.rfind(|c: char| c == '[' || c == ',') {
                 let after_bracket = &before_cursor[bracket_pos + 1..];
                 let space_count = after_bracket.len() - after_bracket.trim_start().len();
                 let prefix_start = bracket_pos + 1 + space_count;
@@ -569,7 +573,6 @@ impl KbaseLanguageServer {
                 let prev = lines[i].trim();
                 if prev == "trees:" || prev.starts_with("trees:") {
                     if let Some(colon_pos) = trimmed.find(':') {
-                        // Prefix starts after ":" in the trimmed line
                         let after_colon = &trimmed[colon_pos + 1..];
                         let space_count = after_colon.len() - after_colon.trim_start().len();
                         let prefix_start = indent + colon_pos + 1 + space_count;
@@ -612,8 +615,9 @@ impl KbaseLanguageServer {
         // Get existing tree paths from store
         if let Some(store) = store.as_ref() {
             if let Ok(paths) = store.all_tree_paths() {
+                let prefix_lower = prefix.to_lowercase();
                 for path in paths {
-                    if prefix.is_empty() || path.starts_with(prefix) {
+                    if prefix.is_empty() || path.to_lowercase().starts_with(&prefix_lower) || path.to_lowercase().contains(&prefix_lower) {
                         items.push(CompletionItem {
                             label: path.clone(),
                             kind: Some(CompletionItemKind::FOLDER),
@@ -775,7 +779,7 @@ impl LanguageServer for KbaseLanguageServer {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Completion - suggest note titles
                 completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec!["[".to_string(), "(".to_string()]),
+                    trigger_characters: Some(vec!["[".to_string(), "(".to_string(), "-".to_string(), "/".to_string()]),
                     ..Default::default()
                 }),
                 // Workspace symbol search (semantic search via kbase search)
@@ -1113,11 +1117,17 @@ impl LanguageServer for KbaseLanguageServer {
                         return Ok(Some(CompletionResponse::Array(items)));
                     }
 
-                    // Typing [ (but not [[) — complete full [Title](path.md)
-                    if before_cursor.ends_with('[') && !before_cursor.ends_with("[[") {
-                        // Don't trigger if we're already inside a closed link
+                    // Inside [ or typing after [ (but not [[) — complete full [Title](path.md)
+                    // Match when cursor is right after [ or when typing inside an unclosed [
+                    let in_md_link_text = if let Some(bracket_pos) = before_cursor.rfind('[') {
+                        !before_cursor[bracket_pos..].contains(']')
+                            && !before_cursor[..bracket_pos].ends_with('[') // not [[
+                    } else {
+                        false
+                    };
+                    if in_md_link_text {
                         if !after_cursor.starts_with('[') {
-                            let bracket_col = (position.character - 1) as u32;
+                            let bracket_col = before_cursor.rfind('[').unwrap() as u32;
                             let notes = self.notes.read().unwrap();
                             let items: Vec<CompletionItem> = notes
                                 .values()
