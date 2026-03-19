@@ -892,9 +892,10 @@ fn main() -> Result<()> {
             }
 
             // Find orphan tags
-            let orphan_tags: Vec<_> = all_tags
+            let orphan_tags: Vec<String> = all_tags
                 .iter()
                 .filter(|t| !used_tags.contains(t.as_str()))
+                .cloned()
                 .collect();
 
             if orphan_tags.is_empty() {
@@ -906,7 +907,8 @@ fn main() -> Result<()> {
                 }
 
                 if !dry_run {
-                    let removed = store.cleanup_orphan_tags()?;
+                    let removed = store.remove_orphan_tag_nodes(&orphan_tags)?;
+                    store.save()?;
                     println!("\nRemoved {} orphan tags.", removed);
                 } else {
                     println!("\n{} orphan tags would be removed.", orphan_tags.len());

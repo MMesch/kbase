@@ -177,6 +177,82 @@ impl Store {
         Ok(())
     }
 
+    /// Remove specific orphan tag nodes from the store (for clean-tags command).
+    /// Removes the tag nodes themselves (kb:type kb:Tag, kb:parentTag) and any
+    /// remaining kb:hasTag references pointing to them.
+    /// Returns the number of tag nodes removed.
+    pub fn remove_orphan_tag_nodes(&self, orphan_tags: &[String]) -> Result<usize> {
+        if orphan_tags.is_empty() {
+            return Ok(0);
+        }
+
+        let has_tag_pred = self.iri("hasTag");
+        let mut count = 0;
+
+        for tag in orphan_tags {
+            let tag_iri = self.tag_iri(tag);
+
+            // Collect all triples where this tag is the subject (?tag ?p ?o)
+            let subj_query = format!(
+                r#"SELECT ?p ?o WHERE {{ <{}> ?p ?o . }}"#,
+                tag_iri.as_str()
+            );
+
+            let mut subj_triples: Vec<(NamedNode, Term)> = Vec::new();
+            if let QueryResults::Solutions(solutions) = self.inner.query(&subj_query)? {
+                for solution in solutions.flatten() {
+                    if let (Some(Term::NamedNode(p)), Some(o)) =
+                        (solution.get("p"), solution.get("o"))
+                    {
+                        subj_triples.push((p.clone(), o.clone()));
+                    }
+                }
+            }
+
+            for (p, o) in subj_triples {
+                self.inner.remove(&Quad::new(
+                    tag_iri.clone(),
+                    p,
+                    o,
+                    GraphNameRef::DefaultGraph,
+                ))?;
+            }
+
+            // Remove any ?note kb:hasTag ?tag triples (defensive)
+            let obj_query = format!(
+                r#"SELECT ?note WHERE {{ ?note <{}hasTag> <{}> . }}"#,
+                KBASE_NS,
+                tag_iri.as_str()
+            );
+
+            let mut notes_with_tag: Vec<NamedNode> = Vec::new();
+            if let QueryResults::Solutions(solutions) = self.inner.query(&obj_query)? {
+                for solution in solutions.flatten() {
+                    if let Some(Term::NamedNode(note)) = solution.get("note") {
+                        notes_with_tag.push(note.clone());
+                    }
+                }
+            }
+
+            for note in notes_with_tag {
+                self.inner.remove(&Quad::new(
+                    note,
+                    has_tag_pred.clone(),
+                    tag_iri.clone(),
+                    GraphNameRef::DefaultGraph,
+                ))?;
+            }
+
+            count += 1;
+        }
+
+        if count > 0 {
+            self.mark_dirty();
+        }
+
+        Ok(count)
+    }
+
     /// Remove orphaned tree hierarchy edges that no notes reference
     pub fn cleanup_orphan_tags(&self) -> Result<usize> {
         // Step 1: Get all tree paths currently used by notes
