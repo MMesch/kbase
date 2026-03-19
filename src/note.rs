@@ -60,6 +60,15 @@ impl TreeEdge {
     }
 }
 
+/// A typed link extracted from a frontmatter field (e.g., depends_on: ["[[target]]"])
+#[derive(Debug, Clone)]
+pub struct TypedLink {
+    /// The frontmatter field name (e.g., "depends_on")
+    pub field: String,
+    /// The link target (note title from [[target]])
+    pub target: String,
+}
+
 /// Parsed note with frontmatter
 #[derive(Debug, Clone)]
 pub struct Note {
@@ -70,6 +79,8 @@ pub struct Note {
     pub tree_edges: Vec<TreeEdge>,
     pub fields: HashMap<String, serde_yaml::Value>,
     pub links: Vec<Link>,
+    /// Typed links extracted from frontmatter array fields (e.g., depends_on: ["[[X]]"])
+    pub typed_links: Vec<TypedLink>,
 }
 
 /// Frontmatter structure
@@ -109,6 +120,9 @@ pub fn parse(path: &Path, link_syntax: LinkSyntax) -> Result<Note> {
     // Parse tree edges from both tags and trees field
     let tree_edges = extract_tree_edges(&fm.tags, &fm.trees);
 
+    // Parse typed links from other frontmatter fields
+    let typed_links = extract_typed_links(&fm.other);
+
     Ok(Note {
         path: path.to_path_buf(),
         title,
@@ -116,6 +130,7 @@ pub fn parse(path: &Path, link_syntax: LinkSyntax) -> Result<Note> {
         tree_edges,
         fields: fm.other,
         links,
+        typed_links,
     })
 }
 
@@ -143,6 +158,60 @@ fn extract_tree_edges(
     }
 
     edges
+}
+
+// Regex to match [[wiki links]] in frontmatter values
+static FRONTMATTER_WIKI_LINK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").unwrap());
+
+/// Extract typed links from frontmatter fields.
+/// Looks for array fields containing [[wiki links]], e.g.:
+///   depends_on:
+///     - "[[jupyter-chat]]"
+///     - "[[jupyter-ai-router]]"
+fn extract_typed_links(fields: &HashMap<String, serde_yaml::Value>) -> Vec<TypedLink> {
+    // Fields to skip (handled elsewhere)
+    const SKIP_FIELDS: &[&str] = &["title", "tags", "trees"];
+
+    let mut typed_links = Vec::new();
+
+    for (field, value) in fields {
+        if SKIP_FIELDS.contains(&field.as_str()) {
+            continue;
+        }
+
+        match value {
+            serde_yaml::Value::Sequence(seq) => {
+                for item in seq {
+                    if let Some(s) = item.as_str() {
+                        for cap in FRONTMATTER_WIKI_LINK_RE.captures_iter(s) {
+                            let target = cap[1].trim().to_string();
+                            if !target.is_empty() {
+                                typed_links.push(TypedLink {
+                                    field: field.clone(),
+                                    target,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            serde_yaml::Value::String(s) => {
+                for cap in FRONTMATTER_WIKI_LINK_RE.captures_iter(s) {
+                    let target = cap[1].trim().to_string();
+                    if !target.is_empty() {
+                        typed_links.push(TypedLink {
+                            field: field.clone(),
+                            target,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    typed_links
 }
 
 /// Create a new note with the given title

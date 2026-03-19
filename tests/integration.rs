@@ -229,6 +229,7 @@ fn persistent_store_opens_and_persists() {
             tree_edges: vec![],
             fields: Default::default(),
             links: vec![],
+            typed_links: vec![],
         };
         store.upsert_note(&note).expect("Failed to insert note");
 
@@ -259,6 +260,7 @@ fn persistent_store_tracks_mtime() {
         tree_edges: vec![],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
 
     // Insert without mtime
@@ -298,6 +300,7 @@ fn persistent_store_lists_all_paths() {
             tree_edges: vec![],
             fields: Default::default(),
             links: vec![],
+            typed_links: vec![],
         };
         store.upsert_note(&note).expect("Failed to insert");
     }
@@ -323,6 +326,7 @@ fn persistent_store_removes_notes() {
         tree_edges: vec![],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
 
     store.upsert_note(&note).expect("Failed to insert");
@@ -430,6 +434,7 @@ fn note_is_tree_node() {
         tree_edges: vec![note::TreeEdge::parse("domain/ai").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&ai_note).expect("Failed to insert ai note");
 
@@ -441,6 +446,7 @@ fn note_is_tree_node() {
         tree_edges: vec![note::TreeEdge::parse("domain/ai/llms").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&llm_note).expect("Failed to insert llm note");
 
@@ -481,6 +487,7 @@ fn cleanup_orphan_tags_removes_unused() {
         tree_edges: vec![note::TreeEdge::parse("domain/ai/ml/deep-learning").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&note1).expect("Failed to insert");
 
@@ -519,6 +526,7 @@ fn cleanup_preserves_shared_ancestors() {
         tree_edges: vec![note::TreeEdge::parse("domain/ai/topic-x").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&note1).expect("Failed to insert");
 
@@ -529,6 +537,7 @@ fn cleanup_preserves_shared_ancestors() {
         tree_edges: vec![note::TreeEdge::parse("domain/ai/topic-y").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&note2).expect("Failed to insert");
 
@@ -569,6 +578,7 @@ fn export_dot_includes_notes_and_edges() {
             start_col: 0,
             end_col: 4,
         }],
+        typed_links: vec![],
     };
     store.upsert_note(&note1).expect("Failed to insert");
 
@@ -579,10 +589,11 @@ fn export_dot_includes_notes_and_edges() {
         tree_edges: vec![note::TreeEdge::parse("domain/ai/ml").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&note2).expect("Failed to insert");
 
-    let dot = store.export_dot().expect("Failed to export DOT");
+    let dot = store.export_dot(None).expect("Failed to export DOT");
 
     // Check DOT structure
     assert!(dot.starts_with("digraph vault {"), "Should be valid DOT");
@@ -606,6 +617,7 @@ fn export_graphml_valid_xml() {
         tree_edges: vec![note::TreeEdge::parse("type/test").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&note).expect("Failed to insert");
 
@@ -842,6 +854,7 @@ fn clean_tags_finds_orphan_tags() {
         tree_edges: vec![note::TreeEdge::parse("domain/ai").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&note).expect("Failed to insert");
 
@@ -911,6 +924,7 @@ fn clean_tags_detects_orphans_after_deletion() {
         tree_edges: vec![note::TreeEdge::parse("domain/ai").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&note1).expect("Failed to insert");
 
@@ -921,6 +935,7 @@ fn clean_tags_detects_orphans_after_deletion() {
         tree_edges: vec![note::TreeEdge::parse("domain/web").unwrap()],
         fields: Default::default(),
         links: vec![],
+        typed_links: vec![],
     };
     store.upsert_note(&note2).expect("Failed to insert");
 

@@ -150,6 +150,9 @@ enum Commands {
         /// Output file (defaults to stdout)
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Filter to only show links of this frontmatter field type (e.g., depends_on)
+        #[arg(long)]
+        link_type: Option<String>,
     },
     /// Show vault overview (tags, link structure, key notes)
     Overview {
@@ -604,12 +607,12 @@ fn main() -> Result<()> {
             let cwd = std::env::current_dir()?;
             println!("\nSkills installed to {}/.claude/skills/", cwd.display());
         }
-        Commands::Export { format, output } => {
+        Commands::Export { format, output, link_type } => {
             let vault_path = get_vault()?;
             let store = load_store(&vault_path, &mut timer)?;
 
             let content = match format.as_str() {
-                "dot" => store.export_dot()?,
+                "dot" => store.export_dot(link_type.as_deref())?,
                 "graphml" => store.export_graphml()?,
                 _ => anyhow::bail!("Unknown format: {}. Use 'dot' or 'graphml'", format),
             };
