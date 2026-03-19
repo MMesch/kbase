@@ -770,8 +770,15 @@ impl LanguageServer for KbaseLanguageServer {
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::INCREMENTAL,
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::INCREMENTAL),
+                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                            include_text: Some(false),
+                        })),
+                        ..Default::default()
+                    },
                 )),
                 // Go to definition - follow [[links]]
                 definition_provider: Some(OneOf::Left(true)),
@@ -845,6 +852,13 @@ impl LanguageServer for KbaseLanguageServer {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         self.refresh_notes().await;
         self.publish_diagnostics_for_file(&params.text_document.uri).await;
+    }
+
+    async fn did_change(&self, _params: DidChangeTextDocumentParams) {
+        // Refresh the notes cache on every change so that cross-file features
+        // (backlinks, note title completions) remain up to date.
+        // The graph store is updated on did_save when the file is persisted to disk.
+        self.refresh_notes().await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
