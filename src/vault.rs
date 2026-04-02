@@ -37,7 +37,8 @@ notes_dir: kbase
 # Graph store backend: nquads (fast), rocksdb (persistent), fresh (no cache)
 # store: nquads
 
-# Folder organization root: "/" uses full tag path, "domain" strips that prefix
+# Folder organization root (uses first matching tag):
+# "/" uses full tag path, "domain" strips that prefix
 # organize_root: /
 
 # Embedding settings for semantic search
