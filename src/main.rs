@@ -109,7 +109,11 @@ enum Commands {
         notes: bool,
     },
     /// Validate notes against schema
-    Validate,
+    Validate {
+        /// Check that file locations match tags (based on organize_root)
+        #[arg(long)]
+        structure: bool,
+    },
     /// Find similar notes using embeddings
     ///
     /// Requires ONNX model files (model.onnx, tokenizer.json) in one of:
@@ -361,8 +365,10 @@ fn main() -> Result<()> {
                 println!("{}", line);
             }
         }
-        Commands::Validate => {
+        Commands::Validate { structure } => {
             let vault_path = get_vault()?;
+            let config = Config::load(&vault_path)?;
+            let notes_path = config.notes_path(&vault_path);
             let schema = schema::Schema::load(&vault_path)?;
             timer.lap("load schema");
             let notes = vault::load_notes(&vault_path)?;
@@ -381,7 +387,6 @@ fn main() -> Result<()> {
             timer.lap("schema validation");
 
             // Broken link detection
-            let config = Config::load(&vault_path)?;
             let titles: std::collections::HashSet<String> = notes.iter()
                 .map(|n| n.title.to_lowercase())
                 .collect();
@@ -408,6 +413,32 @@ fn main() -> Result<()> {
                 }
             }
             timer.lap("broken links");
+
+            // Structure validation: check file locations match tags
+            if structure {
+                for n in &notes {
+                    if let Some(expected_folder) = config.folder_for_tags(&n.tags) {
+                        let actual_folder = n.path.parent()
+                            .and_then(|p| p.strip_prefix(&notes_path).ok())
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default();
+
+                        let expected_normalized = expected_folder.replace('\\', "/");
+                        let actual_normalized = actual_folder.replace('\\', "/");
+
+                        if expected_normalized != actual_normalized {
+                            println!(
+                                "{}:structure: expected folder '{}' but found '{}'",
+                                n.path.display(),
+                                expected_normalized,
+                                actual_normalized
+                            );
+                            total_violations += 1;
+                        }
+                    }
+                }
+                timer.lap("structure validation");
+            }
 
             // Graph constraints (SPARQL)
             if !schema.constraints.is_empty() {

@@ -213,3 +213,75 @@ impl Config {
         Ok(config)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_root(root: &str) -> Config {
+        Config {
+            organize_root: root.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn folder_for_tag_with_root_slash() {
+        let cfg = config_with_root("/");
+        // With "/" root, hierarchical tags return full path
+        assert_eq!(cfg.folder_for_tag("domain/ai"), Some("domain/ai".to_string()));
+        assert_eq!(cfg.folder_for_tag("domain/ai/ml"), Some("domain/ai/ml".to_string()));
+        // Single-segment tags don't create folders
+        assert_eq!(cfg.folder_for_tag("flat"), None);
+    }
+
+    #[test]
+    fn folder_for_tag_with_specific_root() {
+        let cfg = config_with_root("domain");
+        // With "domain" root, strips the prefix
+        assert_eq!(cfg.folder_for_tag("domain/ai"), Some("ai".to_string()));
+        assert_eq!(cfg.folder_for_tag("domain/ai/ml"), Some("ai/ml".to_string()));
+        // Tags not matching root return None
+        assert_eq!(cfg.folder_for_tag("type/reference"), None);
+        assert_eq!(cfg.folder_for_tag("domain"), None); // exact match, no subfolder
+    }
+
+    #[test]
+    fn folder_for_tags_finds_first_match() {
+        let cfg = config_with_root("domain");
+        let tags = vec![
+            "type/reference".to_string(),
+            "domain/ai".to_string(),
+            "domain/web".to_string(),
+        ];
+        // Should find first matching tag (domain/ai)
+        assert_eq!(cfg.folder_for_tags(&tags), Some("ai".to_string()));
+
+        // No matching tags
+        let tags2 = vec!["type/reference".to_string(), "flat".to_string()];
+        assert_eq!(cfg.folder_for_tags(&tags2), None);
+    }
+
+    #[test]
+    fn tag_for_folder_with_root_slash() {
+        let cfg = config_with_root("/");
+        assert_eq!(cfg.tag_for_folder("ai/ml"), "ai/ml");
+        assert_eq!(cfg.tag_for_folder("web"), "web");
+    }
+
+    #[test]
+    fn tag_for_folder_with_specific_root() {
+        let cfg = config_with_root("domain");
+        assert_eq!(cfg.tag_for_folder("ai"), "domain/ai");
+        assert_eq!(cfg.tag_for_folder("ai/ml"), "domain/ai/ml");
+    }
+
+    #[test]
+    fn roundtrip_folder_tag() {
+        let cfg = config_with_root("domain");
+        let tag = "domain/ai/ml";
+        let folder = cfg.folder_for_tag(tag).unwrap();
+        let back = cfg.tag_for_folder(&folder);
+        assert_eq!(back, tag);
+    }
+}
