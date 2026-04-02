@@ -24,6 +24,48 @@ pub fn init(path: &Path) -> Result<()> {
     fs::create_dir_all(&kbase_path)
         .with_context(|| format!("Failed to create {}", kbase_path.display()))?;
 
+    // Create default config with all options documented
+    let config_content = r##"# Link syntax: wiki ([[target]]), markdown ([text](path)), or both
+link_syntax: both
+
+# Link path resolution: relative (to current file) or vault (to vault root)
+# link_base: vault
+
+# Subdirectory containing notes (relative to vault root)
+notes_dir: kbase
+
+# Graph store backend: nquads (fast), rocksdb (persistent), fresh (no cache)
+# store: nquads
+
+# Embedding settings for semantic search
+embeddings:
+  # Backend: onnx (local) or ollama (server)
+  backend: onnx
+  # Chunk level: none, #, ##, ###, or paragraph
+  chunk_level: "#"
+  # Include note title and headers in chunk context
+  # include_context: true
+
+# Tree/tag hierarchy settings
+# trees:
+#   syntax: [tags, trees]  # recognize both tag paths and trees field
+#   warn_orphans: true     # warn about orphan nodes in tree paths
+
+# Settings for kbase new command
+# new_note:
+#   tags: []               # default tags for new notes
+#   fields: {}             # default frontmatter fields
+#   organize_by_tag: false # place notes in folders matching first hierarchical tag
+#   infer_tag_from_cwd: true # auto-add tag based on current directory
+"##;
+    fs::write(kbase_path.join("config.yaml"), config_content)
+        .with_context(|| "Failed to create config.yaml")?;
+
+    // Create notes directory
+    let notes_path = path.join("kbase");
+    fs::create_dir_all(&notes_path)
+        .with_context(|| format!("Failed to create {}", notes_path.display()))?;
+
     Ok(())
 }
 

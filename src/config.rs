@@ -154,12 +154,15 @@ impl Config {
         }
     }
 
-    /// Load config from .kbase/config.yaml, or return defaults
+    /// Load config from .kbase/config.yaml
     pub fn load(vault_path: &Path) -> Result<Self> {
         let config_path = vault_path.join(".kbase").join("config.yaml");
 
         if !config_path.exists() {
-            return Ok(Self::default());
+            anyhow::bail!(
+                "No config found at {}. Run `kbase init` to create a vault.",
+                config_path.display()
+            );
         }
 
         let content = fs::read_to_string(&config_path)

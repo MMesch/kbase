@@ -284,7 +284,7 @@ fn main() -> Result<()> {
     let load_store = |vault_path: &PathBuf, timer: &mut Timer| -> Result<store::Store> {
         let backend = match cli.store {
             Some(arg) => arg.into(),
-            None => Config::load(vault_path).map(|c| c.store).unwrap_or_default(),
+            None => Config::load(vault_path)?.store,
         };
         timer.lap(&format!("loading {:?} store", backend));
         let store = vault::load_with_backend(vault_path, backend)?;

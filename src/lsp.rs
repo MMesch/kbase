@@ -676,7 +676,10 @@ impl KbaseLanguageServer {
         };
 
         // Parse the note
-        let config = crate::config::Config::load(&vault_path).unwrap_or_default();
+        let config = match crate::config::Config::load(&vault_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
         let parsed_note = match note::parse(&path, config.link_syntax) {
             Ok(n) => n,
             Err(_) => return,
@@ -726,7 +729,7 @@ impl KbaseLanguageServer {
         if let Ok(Some(action)) = response {
             if action.title == "Create" {
                 let vault_path = self.vault_path.read().unwrap().clone()?;
-                let cfg = Config::load(&vault_path).unwrap_or_default();
+                let cfg = Config::load(&vault_path).ok()?;
                 let notes_path = cfg.notes_path(&vault_path);
 
                 // Determine folder from first hierarchical tag if organize_by_tag is enabled
