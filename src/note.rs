@@ -247,11 +247,11 @@ pub fn create(
     fs::create_dir_all(&note_dir)
         .with_context(|| format!("Failed to create directory {}", note_dir.display()))?;
 
-    // Build tags YAML
+    // Build tags YAML (block style)
     let tags_yaml = if tags.is_empty() {
         "[]".to_string()
     } else {
-        format!("[{}]", tags.iter().map(|t| format!("\"{}\"", t)).collect::<Vec<_>>().join(", "))
+        format!("\n{}", tags.iter().map(|t| format!("  - {}", t)).collect::<Vec<_>>().join("\n"))
     };
 
     // Build extra fields YAML
@@ -326,16 +326,24 @@ pub fn create_with_schema(
 
     // Override tags if provided
     if !tags.is_empty() {
-        let tags_line = format!("tags: [{}]", tags.iter().map(|t| format!("\"{}\"", t)).collect::<Vec<_>>().join(", "));
+        let tags_block = format!("tags:\n{}", tags.iter().map(|t| format!("  - {}", t)).collect::<Vec<_>>().join("\n"));
         // Replace the tags line in frontmatter
         let lines: Vec<&str> = frontmatter.lines().collect();
-        let new_lines: Vec<String> = lines.iter().map(|line| {
+        let mut new_lines: Vec<String> = Vec::new();
+        let mut skip_tag_items = false;
+        for line in lines {
             if line.starts_with("tags:") {
-                tags_line.clone()
+                new_lines.push(tags_block.clone());
+                // Check if it's inline style or block style
+                skip_tag_items = !line.contains('[');
+            } else if skip_tag_items && line.starts_with("  - ") {
+                // Skip existing block-style tag items
+                continue;
             } else {
-                line.to_string()
+                skip_tag_items = false;
+                new_lines.push(line.to_string());
             }
-        }).collect();
+        }
         frontmatter = new_lines.join("\n");
     }
 
