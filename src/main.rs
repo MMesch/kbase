@@ -191,6 +191,9 @@ enum Commands {
         from: String,
         /// New tag prefix
         to: String,
+        /// Move files to match new tag structure (based on organize_root)
+        #[arg(long, short = 'm')]
+        r#move: bool,
         /// Preview changes without modifying files
         #[arg(long)]
         dry_run: bool,
@@ -880,11 +883,14 @@ fn main() -> Result<()> {
                 println!("\n{} files {}", moves.len(), if dry_run { "would be moved" } else { "moved" });
             }
         }
-        Commands::Retag { from, to, dry_run } => {
+        Commands::Retag { from, to, r#move, dry_run } => {
             let vault_path = get_vault()?;
+            let cfg = Config::load(&vault_path)?;
+            let notes_path = cfg.notes_path(&vault_path);
             let notes = vault::load_notes(&vault_path)?;
 
             let mut total_changes = 0;
+            let mut moves: Vec<(PathBuf, PathBuf, String)> = Vec::new();
 
             for n in &notes {
                 // Only process notes that have a matching tag
@@ -908,7 +914,55 @@ fn main() -> Result<()> {
                         std::fs::write(&n.path, &new_content)?;
                         println!("Modified: {}", n.path.display());
                     }
+
+                    // Calculate new file location if --move is set
+                    if r#move {
+                        // Compute new tags after retag
+                        let new_tags: Vec<String> = n.tags.iter().map(|t| {
+                            if t == &from {
+                                to.clone()
+                            } else if let Some(rest) = t.strip_prefix(&format!("{}/", from)) {
+                                format!("{}/{}", to, rest)
+                            } else {
+                                t.clone()
+                            }
+                        }).collect();
+
+                        // Get folder for new tags
+                        if let Some(new_folder) = cfg.folder_for_tags(&new_tags) {
+                            let filename = n.path.file_name().unwrap();
+                            let new_path = notes_path.join(&new_folder).join(filename);
+                            if new_path != n.path {
+                                moves.push((n.path.clone(), new_path, n.title.clone()));
+                            }
+                        }
+                    }
                 }
+            }
+
+            // Execute moves if --move is set
+            if r#move && !moves.is_empty() {
+                println!("\n## {}\n", if dry_run { "Would move" } else { "Moving" });
+                for (from_path, to_path, _title) in &moves {
+                    let from_rel = from_path.strip_prefix(&vault_path).unwrap_or(from_path);
+                    let to_rel = to_path.strip_prefix(&vault_path).unwrap_or(to_path);
+                    println!("  {} -> {}", from_rel.display(), to_rel.display());
+
+                    if !dry_run {
+                        if let Some(parent) = to_path.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::rename(from_path, to_path)?;
+                    }
+                }
+
+                // Update links after moves
+                let link_updates = update_links_after_moves(&vault_path, &moves, dry_run)?;
+                if link_updates > 0 {
+                    println!("\n{} link(s) {}", link_updates, if dry_run { "would be updated" } else { "updated" });
+                }
+
+                println!("\n{} files {}", moves.len(), if dry_run { "would be moved" } else { "moved" });
             }
 
             if dry_run {
