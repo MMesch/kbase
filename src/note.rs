@@ -215,17 +215,26 @@ fn extract_typed_links(fields: &HashMap<String, serde_yaml::Value>) -> Vec<Typed
 }
 
 /// Create a new note with the given title, tags, and extra fields
+///
+/// If `folder` is provided, the note is placed in that subdirectory (e.g., "domain/ai").
+/// Otherwise, the folder is derived from the title if it contains path separators.
 pub fn create(
     vault_path: &Path,
     title: &str,
     tags: &[String],
     extra_fields: &HashMap<String, String>,
+    folder: Option<&str>,
 ) -> Result<PathBuf> {
-    let (subdir, leaf_title) = split_title_path(title);
+    let (title_subdir, leaf_title) = split_title_path(title);
     let filename = slugify(&leaf_title);
-    let note_dir = match subdir {
-        Some(dir) => vault_path.join(dir),
-        None => vault_path.to_path_buf(),
+
+    // folder parameter takes precedence, then title path, then vault root
+    let note_dir = if let Some(f) = folder {
+        vault_path.join(f)
+    } else if let Some(dir) = title_subdir {
+        vault_path.join(dir)
+    } else {
+        vault_path.to_path_buf()
     };
     let note_path = note_dir.join(format!("{}.md", filename));
 
@@ -280,17 +289,24 @@ tags: {}
 }
 
 /// Create a new note with schema-based frontmatter template
+///
+/// If `folder` is provided, the note is placed in that subdirectory.
 pub fn create_with_schema(
     vault_path: &Path,
     title: &str,
     tags: &[String],
     extra_fields: &HashMap<String, String>,
+    folder: Option<&str>,
 ) -> Result<PathBuf> {
-    let (subdir, leaf_title) = split_title_path(title);
+    let (title_subdir, leaf_title) = split_title_path(title);
     let filename = slugify(&leaf_title);
-    let note_dir = match subdir {
-        Some(dir) => vault_path.join(dir),
-        None => vault_path.to_path_buf(),
+
+    let note_dir = if let Some(f) = folder {
+        vault_path.join(f)
+    } else if let Some(dir) = title_subdir {
+        vault_path.join(dir)
+    } else {
+        vault_path.to_path_buf()
     };
     let note_path = note_dir.join(format!("{}.md", filename));
 

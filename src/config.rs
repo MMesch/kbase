@@ -111,6 +111,16 @@ pub struct NewNoteConfig {
     /// Additional default frontmatter fields (key: value)
     #[serde(default)]
     pub fields: std::collections::HashMap<String, String>,
+    /// Place notes in folders matching their first hierarchical tag
+    #[serde(default)]
+    pub organize_by_tag: bool,
+    /// Infer tag from current working directory (relative to notes_dir)
+    #[serde(default = "default_true")]
+    pub infer_tag_from_cwd: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]

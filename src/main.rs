@@ -305,12 +305,33 @@ fn main() -> Result<()> {
             let vault_path = get_vault()?;
             let config = Config::load(&vault_path)?;
             let notes_path = config.notes_path(&vault_path);
-            // Merge CLI tags with config default tags (CLI takes precedence, config provides defaults)
-            let all_tags: Vec<String> = config.new_note.tags.iter()
-                .chain(tags.iter())
-                .cloned()
-                .collect();
-            let note_path = note::create(&notes_path, &title, &all_tags, &config.new_note.fields)?;
+
+            // Start with config default tags, then CLI tags
+            let mut all_tags: Vec<String> = config.new_note.tags.clone();
+            all_tags.extend(tags.iter().cloned());
+
+            // Option 2: Infer tag from current working directory
+            if config.new_note.infer_tag_from_cwd {
+                if let Ok(cwd) = std::env::current_dir() {
+                    if let Ok(rel) = cwd.strip_prefix(&notes_path) {
+                        let inferred_tag = rel.to_string_lossy().replace('\\', "/");
+                        if !inferred_tag.is_empty() && !all_tags.contains(&inferred_tag) {
+                            all_tags.push(inferred_tag);
+                        }
+                    }
+                }
+            }
+
+            // Option 1: Determine folder from first hierarchical tag
+            let folder = if config.new_note.organize_by_tag {
+                all_tags.iter()
+                    .find(|t| t.contains('/'))
+                    .map(|t| t.as_str())
+            } else {
+                None
+            };
+
+            let note_path = note::create(&notes_path, &title, &all_tags, &config.new_note.fields, folder)?;
             println!("Created {}", note_path.display());
         }
         Commands::List { tag } => {
