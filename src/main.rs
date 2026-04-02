@@ -98,6 +98,9 @@ enum Commands {
         /// Frontmatter fields as key=value (can be repeated: -f status=draft -f author=me)
         #[arg(short, long = "field", value_parser = parse_key_value)]
         fields: Vec<(String, String)>,
+        /// Open the note in $EDITOR after creation
+        #[arg(short, long)]
+        edit: bool,
     },
     /// List notes
     List {
@@ -212,6 +215,16 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Move/rename a note, updating links and folder location
+    Move {
+        /// Current note (title or path)
+        from: String,
+        /// New title
+        to: String,
+        /// Preview changes without modifying files
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Clean orphan tags (tags in graph with no notes)
     CleanTags {
         /// Preview without deleting
@@ -318,7 +331,7 @@ fn main() -> Result<()> {
             vault::init(&path)?;
             println!("Initialized kbase vault in {}", path.display());
         }
-        Commands::New { title, tags, fields } => {
+        Commands::New { title, tags, fields, edit } => {
             let vault_path = get_vault()?;
             let config = Config::load(&vault_path)?;
             let notes_path = config.notes_path(&vault_path);
@@ -353,6 +366,14 @@ fn main() -> Result<()> {
 
             let note_path = note::create(&notes_path, &title, &all_tags, &all_fields, folder.as_deref())?;
             println!("Created {}", note_path.display());
+
+            if edit {
+                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+                std::process::Command::new(&editor)
+                    .arg(&note_path)
+                    .status()
+                    .with_context(|| format!("Failed to open {} with {}", note_path.display(), editor))?;
+            }
         }
         Commands::List { tag } => {
             let vault_path = get_vault()?;
@@ -1018,6 +1039,69 @@ fn main() -> Result<()> {
                 println!("\n{} files modified", total_changes);
             }
         }
+        Commands::Move { from, to, dry_run } => {
+            let vault_path = get_vault()?;
+            let cfg = Config::load(&vault_path)?;
+            let notes_path = cfg.notes_path(&vault_path);
+            let notes = vault::load_notes(&vault_path)?;
+
+            // Find the source note
+            let source = notes.iter()
+                .find(|n| n.title.to_lowercase() == from.to_lowercase()
+                    || n.path.to_string_lossy().contains(&from))
+                .ok_or_else(|| anyhow::anyhow!("Note not found: {}", from))?;
+
+            // Strip .md if provided
+            let new_title = to.strip_suffix(".md").unwrap_or(&to);
+            let new_filename = format!("{}.md", note::slugify(new_title));
+
+            // Compute new path based on tags and organize_root
+            let new_folder = cfg.folder_for_tags(&source.tags);
+            let new_path = match new_folder {
+                Some(folder) => notes_path.join(&folder).join(&new_filename),
+                None => notes_path.join(&new_filename),
+            };
+
+            if new_path.exists() && new_path != source.path {
+                anyhow::bail!("Target already exists: {}", new_path.display());
+            }
+
+            // Update title in frontmatter
+            let content = std::fs::read_to_string(&source.path)?;
+            let new_content = update_frontmatter_title(&content, new_title);
+
+            let from_rel = source.path.strip_prefix(&vault_path).unwrap_or(&source.path);
+            let to_rel = new_path.strip_prefix(&vault_path).unwrap_or(&new_path);
+
+            if dry_run {
+                println!("Would rename: {} -> {}", from_rel.display(), to_rel.display());
+                if content != new_content {
+                    println!("Would update title in frontmatter");
+                }
+            } else {
+                // Write updated content
+                std::fs::write(&source.path, &new_content)?;
+
+                // Move file if path changed
+                if new_path != source.path {
+                    if let Some(parent) = new_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::rename(&source.path, &new_path)?;
+                }
+
+                println!("Renamed: {} -> {}", from_rel.display(), to_rel.display());
+            }
+
+            // Update links in other notes
+            if new_path != source.path {
+                let moves = vec![(source.path.clone(), new_path.clone(), source.title.clone())];
+                let link_updates = update_links_after_moves(&vault_path, &moves, dry_run)?;
+                if link_updates > 0 {
+                    println!("{} link(s) {}", link_updates, if dry_run { "would be updated" } else { "updated" });
+                }
+            }
+        }
         Commands::CleanTags { dry_run } => {
             let vault_path = get_vault()?;
             let store = load_store(&vault_path, &mut timer)?;
@@ -1223,6 +1307,14 @@ fn normalize_markdown_links(
 }
 
 /// Convert markdown links [Text](slug.md) to wiki [[Title]]
+/// Update the title field in frontmatter
+fn update_frontmatter_title(content: &str, new_title: &str) -> String {
+    use regex::Regex;
+
+    let re = Regex::new(r#"(?m)^title:\s*["']?.*["']?\s*$"#).unwrap();
+    re.replace(content, format!("title: \"{}\"", new_title)).to_string()
+}
+
 fn convert_markdown_to_wiki(content: &str) -> String {
     use regex::Regex;
 
