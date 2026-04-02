@@ -161,16 +161,15 @@ impl Config {
 
     /// Get the folder path for a tag based on organize_root.
     /// Returns None if the tag doesn't match the organize_root.
-    /// - organize_root: "/" → "domain/ai" returns "domain/ai"
+    /// - organize_root: "/" → "domain/ai" returns "domain/ai", "flat" returns "flat"
     /// - organize_root: "domain" → "domain/ai" returns "ai"
     /// - organize_root: "domain" → "type/ref" returns None
     pub fn folder_for_tag(&self, tag: &str) -> Option<String> {
+        if tag.is_empty() {
+            return None;
+        }
         if self.organize_root == "/" {
-            if tag.contains('/') {
-                Some(tag.to_string())
-            } else {
-                None // Single-segment tags don't create folders
-            }
+            Some(tag.to_string())
         } else {
             let prefix = format!("{}/", self.organize_root);
             tag.strip_prefix(&prefix).map(|s| s.to_string())
@@ -228,11 +227,12 @@ mod tests {
     #[test]
     fn folder_for_tag_with_root_slash() {
         let cfg = config_with_root("/");
-        // With "/" root, hierarchical tags return full path
+        // With "/" root, all tags return their path as folder
         assert_eq!(cfg.folder_for_tag("domain/ai"), Some("domain/ai".to_string()));
         assert_eq!(cfg.folder_for_tag("domain/ai/ml"), Some("domain/ai/ml".to_string()));
-        // Single-segment tags don't create folders
-        assert_eq!(cfg.folder_for_tag("flat"), None);
+        assert_eq!(cfg.folder_for_tag("flat"), Some("flat".to_string()));
+        // Empty tags return None
+        assert_eq!(cfg.folder_for_tag(""), None);
     }
 
     #[test]

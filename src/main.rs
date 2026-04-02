@@ -6,6 +6,13 @@ use tracing_subscriber::EnvFilter;
 
 use kbase::{config, config::Config, config::StoreBackend, embeddings, lsp, note, schema, skills, store, vault};
 
+/// Parse key=value pairs for --field option
+fn parse_key_value(s: &str) -> Result<(String, String), String> {
+    let pos = s.find('=')
+        .ok_or_else(|| format!("invalid field format '{}', expected key=value", s))?;
+    Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
+}
+
 #[derive(Parser)]
 #[command(name = "kbase")]
 #[command(about = "Knowledge graph CLI for markdown notes")]
@@ -88,6 +95,9 @@ enum Commands {
         /// Tags to add to the new note (can be repeated: -t foo -t bar)
         #[arg(short, long = "tag")]
         tags: Vec<String>,
+        /// Frontmatter fields as key=value (can be repeated: -f status=draft -f author=me)
+        #[arg(short, long = "field", value_parser = parse_key_value)]
+        fields: Vec<(String, String)>,
     },
     /// List notes
     List {
@@ -308,7 +318,7 @@ fn main() -> Result<()> {
             vault::init(&path)?;
             println!("Initialized kbase vault in {}", path.display());
         }
-        Commands::New { title, tags } => {
+        Commands::New { title, tags, fields } => {
             let vault_path = get_vault()?;
             let config = Config::load(&vault_path)?;
             let notes_path = config.notes_path(&vault_path);
@@ -332,10 +342,16 @@ fn main() -> Result<()> {
                 }
             }
 
+            // Merge config default fields with CLI fields (CLI overrides)
+            let mut all_fields = config.new_note.fields.clone();
+            for (k, v) in fields {
+                all_fields.insert(k, v);
+            }
+
             // Determine folder from tags based on organize_root
             let folder = config.folder_for_tags(&all_tags);
 
-            let note_path = note::create(&notes_path, &title, &all_tags, &config.new_note.fields, folder.as_deref())?;
+            let note_path = note::create(&notes_path, &title, &all_tags, &all_fields, folder.as_deref())?;
             println!("Created {}", note_path.display());
         }
         Commands::List { tag } => {

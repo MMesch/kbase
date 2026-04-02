@@ -225,6 +225,8 @@ pub fn create(
     extra_fields: &HashMap<String, String>,
     folder: Option<&str>,
 ) -> Result<PathBuf> {
+    // Strip .md extension if provided
+    let title = title.strip_suffix(".md").unwrap_or(title);
     let (title_subdir, leaf_title) = split_title_path(title);
     let filename = slugify(&leaf_title);
 
@@ -298,6 +300,8 @@ pub fn create_with_schema(
     extra_fields: &HashMap<String, String>,
     folder: Option<&str>,
 ) -> Result<PathBuf> {
+    // Strip .md extension if provided
+    let title = title.strip_suffix(".md").unwrap_or(title);
     let (title_subdir, leaf_title) = split_title_path(title);
     let filename = slugify(&leaf_title);
 
