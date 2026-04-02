@@ -102,6 +102,17 @@ pub enum LinkBase {
     Vault, // Relative to vault root (.kbase directory)
 }
 
+/// Configuration for new note creation
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct NewNoteConfig {
+    /// Default tags added to new notes
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Additional default frontmatter fields (key: value)
+    #[serde(default)]
+    pub fields: std::collections::HashMap<String, String>,
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default)]
@@ -119,6 +130,9 @@ pub struct Config {
     pub trees: TreesConfig,
     #[serde(default)]
     pub store: StoreBackend,
+    /// Configuration for `kbase new` command
+    #[serde(default)]
+    pub new_note: NewNoteConfig,
 }
 
 impl Config {

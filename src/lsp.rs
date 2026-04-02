@@ -729,7 +729,7 @@ impl KbaseLanguageServer {
                 let cfg = Config::load(&vault_path).unwrap_or_default();
                 let notes_path = cfg.notes_path(&vault_path);
 
-                match note::create_with_schema(&notes_path, title) {
+                match note::create_with_schema(&notes_path, title, &cfg.new_note.tags, &cfg.new_note.fields) {
                     Ok(note_path) => {
                         self.client
                             .log_message(MessageType::INFO, format!("Created {}", note_path.display()))

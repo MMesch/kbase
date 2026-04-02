@@ -23,7 +23,7 @@ struct Cli {
     time: bool,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -85,6 +85,9 @@ enum Commands {
     New {
         /// Note title
         title: String,
+        /// Tags to add to the new note (can be repeated: -t foo -t bar)
+        #[arg(short, long = "tag")]
+        tags: Vec<String>,
     },
     /// List notes
     List {
@@ -289,17 +292,25 @@ fn main() -> Result<()> {
         Ok(store)
     };
 
-    match cli.command {
+    // Default to Overview if no command provided
+    let command = cli.command.unwrap_or(Commands::Overview { limit: 5 });
+
+    match command {
         Commands::Init { path } => {
             let path = path.unwrap_or_else(|| PathBuf::from("."));
             vault::init(&path)?;
             println!("Initialized kbase vault in {}", path.display());
         }
-        Commands::New { title } => {
+        Commands::New { title, tags } => {
             let vault_path = get_vault()?;
             let config = Config::load(&vault_path)?;
             let notes_path = config.notes_path(&vault_path);
-            let note_path = note::create(&notes_path, &title)?;
+            // Merge CLI tags with config default tags (CLI takes precedence, config provides defaults)
+            let all_tags: Vec<String> = config.new_note.tags.iter()
+                .chain(tags.iter())
+                .cloned()
+                .collect();
+            let note_path = note::create(&notes_path, &title, &all_tags, &config.new_note.fields)?;
             println!("Created {}", note_path.display());
         }
         Commands::List { tag } => {

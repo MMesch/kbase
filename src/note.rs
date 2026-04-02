@@ -214,8 +214,13 @@ fn extract_typed_links(fields: &HashMap<String, serde_yaml::Value>) -> Vec<Typed
     typed_links
 }
 
-/// Create a new note with the given title
-pub fn create(vault_path: &Path, title: &str) -> Result<PathBuf> {
+/// Create a new note with the given title, tags, and extra fields
+pub fn create(
+    vault_path: &Path,
+    title: &str,
+    tags: &[String],
+    extra_fields: &HashMap<String, String>,
+) -> Result<PathBuf> {
     let (subdir, leaf_title) = split_title_path(title);
     let filename = slugify(&leaf_title);
     let note_dir = match subdir {
@@ -231,15 +236,42 @@ pub fn create(vault_path: &Path, title: &str) -> Result<PathBuf> {
     fs::create_dir_all(&note_dir)
         .with_context(|| format!("Failed to create directory {}", note_dir.display()))?;
 
-    let content = format!(
-        r#"---
+    // Build tags YAML
+    let tags_yaml = if tags.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[{}]", tags.iter().map(|t| format!("\"{}\"", t)).collect::<Vec<_>>().join(", "))
+    };
+
+    // Build extra fields YAML
+    let extra_yaml = extra_fields
+        .iter()
+        .map(|(k, v)| format!("{}: \"{}\"", k, v))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let content = if extra_yaml.is_empty() {
+        format!(
+            r#"---
 title: "{}"
-tags: []
+tags: {}
 ---
 # {}
 "#,
-        leaf_title, leaf_title
-    );
+            leaf_title, tags_yaml, leaf_title
+        )
+    } else {
+        format!(
+            r#"---
+title: "{}"
+tags: {}
+{}
+---
+# {}
+"#,
+            leaf_title, tags_yaml, extra_yaml, leaf_title
+        )
+    };
 
     fs::write(&note_path, content)
         .with_context(|| format!("Failed to write {}", note_path.display()))?;
@@ -248,7 +280,12 @@ tags: []
 }
 
 /// Create a new note with schema-based frontmatter template
-pub fn create_with_schema(vault_path: &Path, title: &str) -> Result<PathBuf> {
+pub fn create_with_schema(
+    vault_path: &Path,
+    title: &str,
+    tags: &[String],
+    extra_fields: &HashMap<String, String>,
+) -> Result<PathBuf> {
     let (subdir, leaf_title) = split_title_path(title);
     let filename = slugify(&leaf_title);
     let note_dir = match subdir {
@@ -265,7 +302,27 @@ pub fn create_with_schema(vault_path: &Path, title: &str) -> Result<PathBuf> {
         .with_context(|| format!("Failed to create directory {}", note_dir.display()))?;
 
     let schema = Schema::load(vault_path)?;
-    let frontmatter = schema.generate_frontmatter(&leaf_title);
+    let mut frontmatter = schema.generate_frontmatter(&leaf_title);
+
+    // Override tags if provided
+    if !tags.is_empty() {
+        let tags_line = format!("tags: [{}]", tags.iter().map(|t| format!("\"{}\"", t)).collect::<Vec<_>>().join(", "));
+        // Replace the tags line in frontmatter
+        let lines: Vec<&str> = frontmatter.lines().collect();
+        let new_lines: Vec<String> = lines.iter().map(|line| {
+            if line.starts_with("tags:") {
+                tags_line.clone()
+            } else {
+                line.to_string()
+            }
+        }).collect();
+        frontmatter = new_lines.join("\n");
+    }
+
+    // Add extra fields
+    for (k, v) in extra_fields {
+        frontmatter.push_str(&format!("\n{}: \"{}\"", k, v));
+    }
 
     let content = format!(
         "---\n{}\n---\n\n# {}\n",
