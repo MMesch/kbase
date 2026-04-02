@@ -732,16 +732,10 @@ impl KbaseLanguageServer {
                 let cfg = Config::load(&vault_path).ok()?;
                 let notes_path = cfg.notes_path(&vault_path);
 
-                // Determine folder from first hierarchical tag if organize_by_tag is enabled
-                let folder: Option<&str> = if cfg.new_note.organize_by_tag {
-                    cfg.new_note.tags.iter()
-                        .find(|t| t.contains('/'))
-                        .map(|t| t.as_str())
-                } else {
-                    None
-                };
+                // Determine folder from tags based on organize_root
+                let folder = cfg.folder_for_tags(&cfg.new_note.tags);
 
-                match note::create_with_schema(&notes_path, title, &cfg.new_note.tags, &cfg.new_note.fields, folder) {
+                match note::create_with_schema(&notes_path, title, &cfg.new_note.tags, &cfg.new_note.fields, folder.as_deref()) {
                     Ok(note_path) => {
                         self.client
                             .log_message(MessageType::INFO, format!("Created {}", note_path.display()))

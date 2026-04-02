@@ -37,6 +37,9 @@ notes_dir: kbase
 # Graph store backend: nquads (fast), rocksdb (persistent), fresh (no cache)
 # store: nquads
 
+# Folder organization root: "/" uses full tag path, "domain" strips that prefix
+# organize_root: /
+
 # Embedding settings for semantic search
 embeddings:
   # Backend: onnx (local) or ollama (server)
@@ -55,7 +58,6 @@ embeddings:
 # new_note:
 #   tags: []               # default tags for new notes
 #   fields: {}             # default frontmatter fields
-#   organize_by_tag: false # place notes in folders matching first hierarchical tag
 #   infer_tag_from_cwd: true # auto-add tag based on current directory
 "##;
     fs::write(kbase_path.join("config.yaml"), config_content)

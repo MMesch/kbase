@@ -310,28 +310,25 @@ fn main() -> Result<()> {
             let mut all_tags: Vec<String> = config.new_note.tags.clone();
             all_tags.extend(tags.iter().cloned());
 
-            // Option 2: Infer tag from current working directory
+            // Infer tag from current working directory
             if config.new_note.infer_tag_from_cwd {
                 if let Ok(cwd) = std::env::current_dir() {
                     if let Ok(rel) = cwd.strip_prefix(&notes_path) {
-                        let inferred_tag = rel.to_string_lossy().replace('\\', "/");
-                        if !inferred_tag.is_empty() && !all_tags.contains(&inferred_tag) {
-                            all_tags.push(inferred_tag);
+                        let folder_path = rel.to_string_lossy().replace('\\', "/");
+                        if !folder_path.is_empty() {
+                            let inferred_tag = config.tag_for_folder(&folder_path);
+                            if !all_tags.contains(&inferred_tag) {
+                                all_tags.push(inferred_tag);
+                            }
                         }
                     }
                 }
             }
 
-            // Option 1: Determine folder from first hierarchical tag
-            let folder = if config.new_note.organize_by_tag {
-                all_tags.iter()
-                    .find(|t| t.contains('/'))
-                    .map(|t| t.as_str())
-            } else {
-                None
-            };
+            // Determine folder from tags based on organize_root
+            let folder = config.folder_for_tags(&all_tags);
 
-            let note_path = note::create(&notes_path, &title, &all_tags, &config.new_note.fields, folder)?;
+            let note_path = note::create(&notes_path, &title, &all_tags, &config.new_note.fields, folder.as_deref())?;
             println!("Created {}", note_path.display());
         }
         Commands::List { tag } => {
@@ -731,43 +728,53 @@ fn main() -> Result<()> {
             let notes_base = cfg.notes_path(&vault_path);
             let notes = vault::load_notes(&vault_path)?;
 
+            // Use CLI --tree or fall back to config organize_root
+            let tree_filter = tree.as_deref().unwrap_or(&cfg.organize_root);
+
             // Build a map of note paths to their target locations
             let mut moves: Vec<(PathBuf, PathBuf, String)> = Vec::new(); // (from, to, title)
             let mut conflicts: Vec<String> = Vec::new();
             let mut multi_path: Vec<(String, Vec<String>)> = Vec::new(); // (title, [tags])
 
             for n in &notes {
-                // Get tags matching the tree filter
-                let matching_tags: Vec<&String> = if let Some(ref tree_prefix) = tree {
-                    n.tags.iter().filter(|t| t.starts_with(tree_prefix)).collect()
+                // Get folder paths for matching tags
+                let matching_folders: Vec<(String, &String)> = if tree_filter == "/" {
+                    // All hierarchical tags
+                    n.tags.iter()
+                        .filter_map(|t| cfg.folder_for_tag(t).map(|f| (f, t)))
+                        .collect()
                 } else {
-                    n.tags.iter().collect()
+                    // Only tags matching the tree filter
+                    n.tags.iter()
+                        .filter(|t| t.starts_with(tree_filter) && t.len() > tree_filter.len())
+                        .filter_map(|t| cfg.folder_for_tag(t).map(|f| (f, t)))
+                        .collect()
                 };
 
-                if matching_tags.is_empty() {
+                if matching_folders.is_empty() {
                     continue; // Note doesn't match tree filter
                 }
 
                 // Check for multi-path within the filtered tree
-                if matching_tags.len() > 1 {
+                if matching_folders.len() > 1 {
                     multi_path.push((
                         n.title.clone(),
-                        matching_tags.iter().map(|t| t.to_string()).collect(),
+                        matching_folders.iter().map(|(_, t)| t.to_string()).collect(),
                     ));
                 }
 
-                // Use first matching tag as primary path
-                let primary_tag = matching_tags[0];
+                // Use first matching folder
+                let (primary_folder, _primary_tag) = &matching_folders[0];
 
                 let target_path = if flat {
                     // Flat: keep in notes root
                     let filename = n.path.file_name().unwrap();
                     notes_base.join(filename)
                 } else {
-                    // Tree: create directory structure from tag
-                    let tag_path: PathBuf = primary_tag.split('/').collect();
+                    // Tree: create directory structure from folder path
+                    let folder_path: PathBuf = primary_folder.split('/').collect();
                     let filename = n.path.file_name().unwrap();
-                    notes_base.join(tag_path).join(filename)
+                    notes_base.join(folder_path).join(filename)
                 };
 
                 if target_path != n.path {
@@ -864,7 +871,11 @@ fn main() -> Result<()> {
                     }
                 }
 
-                // TODO: Update links in all notes to reflect new paths
+                // Update markdown links in all notes to reflect new paths
+                let link_updates = update_links_after_moves(&vault_path, &moves, dry_run)?;
+                if link_updates > 0 {
+                    println!("\n{} link(s) {}", link_updates, if dry_run { "would be updated" } else { "updated" });
+                }
 
                 println!("\n{} files {}", moves.len(), if dry_run { "would be moved" } else { "moved" });
             }
@@ -1240,6 +1251,94 @@ fn retag_frontmatter(content: &str, from: &str, to: &str) -> String {
     result.push_str(&new_fm);
     result.push_str(&content[fm_end..]);
     result
+}
+
+/// Update markdown links in all notes after files have been moved.
+/// Returns the number of links updated.
+fn update_links_after_moves(
+    vault_path: &Path,
+    moves: &[(PathBuf, PathBuf, String)],
+    dry_run: bool,
+) -> Result<usize> {
+    use regex::Regex;
+    use walkdir::WalkDir;
+
+    if moves.is_empty() {
+        return Ok(0);
+    }
+
+    let config = Config::load(vault_path)?;
+    let notes_path = config.notes_path(vault_path);
+
+    // Build a map from old path to new path (relative to notes_path)
+    let mut path_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (from, to, _) in moves {
+        if let (Ok(from_rel), Ok(to_rel)) = (from.strip_prefix(&notes_path), to.strip_prefix(&notes_path)) {
+            path_map.insert(
+                from_rel.to_string_lossy().to_string(),
+                to_rel.to_string_lossy().to_string(),
+            );
+        }
+    }
+
+    let link_re = Regex::new(r"\[([^\]]+)\]\(([^)]+\.md)\)").unwrap();
+    let mut total_updates = 0;
+
+    // Scan all markdown files (use new paths for moved files)
+    for entry in WalkDir::new(&notes_path)
+        .into_iter()
+        .filter_entry(|e| !e.file_name().to_str().is_some_and(|s| s.starts_with('.')))
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.extension().is_some_and(|ext| ext == "md") {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(path)?;
+        let current_dir = path.parent().unwrap_or(path);
+
+        let mut modified = false;
+        let new_content = link_re.replace_all(&content, |caps: &regex::Captures| {
+            let text = &caps[1];
+            let target = &caps[2];
+
+            // Skip external links
+            if target.starts_with("http") {
+                return caps[0].to_string();
+            }
+
+            // Resolve the link target relative to current file
+            let resolved = current_dir.join(target);
+            let resolved_rel = resolved.strip_prefix(&notes_path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string());
+
+            // Check if this path was moved
+            if let Some(rel) = resolved_rel {
+                // Normalize path separators
+                let rel_normalized = rel.replace('\\', "/");
+                if let Some(new_rel) = path_map.get(&rel_normalized) {
+                    modified = true;
+                    // Compute new relative path from current file to new location
+                    let new_abs = notes_path.join(new_rel);
+                    let new_target = note::relative_path(current_dir, &new_abs);
+                    return format!("[{}]({})", text, new_target.to_string_lossy());
+                }
+            }
+
+            caps[0].to_string()
+        });
+
+        if modified && content != new_content.as_ref() {
+            total_updates += 1;
+            if !dry_run {
+                std::fs::write(path, new_content.as_ref())?;
+            }
+        }
+    }
+
+    Ok(total_updates)
 }
 
 #[cfg(test)]

@@ -111,9 +111,6 @@ pub struct NewNoteConfig {
     /// Additional default frontmatter fields (key: value)
     #[serde(default)]
     pub fields: std::collections::HashMap<String, String>,
-    /// Place notes in folders matching their first hierarchical tag
-    #[serde(default)]
-    pub organize_by_tag: bool,
     /// Infer tag from current working directory (relative to notes_dir)
     #[serde(default = "default_true")]
     pub infer_tag_from_cwd: bool,
@@ -121,6 +118,10 @@ pub struct NewNoteConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_organize_root() -> String {
+    "/".to_string()
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -140,6 +141,10 @@ pub struct Config {
     pub trees: TreesConfig,
     #[serde(default)]
     pub store: StoreBackend,
+    /// Root for folder organization. "/" uses full tag path, "domain" strips that prefix.
+    /// E.g., organize_root: domain → tag domain/ai → folder ai/
+    #[serde(default = "default_organize_root")]
+    pub organize_root: String,
     /// Configuration for `kbase new` command
     #[serde(default)]
     pub new_note: NewNoteConfig,
@@ -151,6 +156,40 @@ impl Config {
         match &self.notes_dir {
             Some(dir) => vault_path.join(dir),
             None => vault_path.to_path_buf(),
+        }
+    }
+
+    /// Get the folder path for a tag based on organize_root.
+    /// Returns None if the tag doesn't match the organize_root.
+    /// - organize_root: "/" → "domain/ai" returns "domain/ai"
+    /// - organize_root: "domain" → "domain/ai" returns "ai"
+    /// - organize_root: "domain" → "type/ref" returns None
+    pub fn folder_for_tag(&self, tag: &str) -> Option<String> {
+        if self.organize_root == "/" {
+            if tag.contains('/') {
+                Some(tag.to_string())
+            } else {
+                None // Single-segment tags don't create folders
+            }
+        } else {
+            let prefix = format!("{}/", self.organize_root);
+            tag.strip_prefix(&prefix).map(|s| s.to_string())
+        }
+    }
+
+    /// Find the first tag that matches organize_root and return its folder path.
+    pub fn folder_for_tags(&self, tags: &[String]) -> Option<String> {
+        tags.iter().find_map(|t| self.folder_for_tag(t))
+    }
+
+    /// Convert a folder path back to a tag based on organize_root.
+    /// - organize_root: "/" → "ai/ml" returns "ai/ml"
+    /// - organize_root: "domain" → "ai/ml" returns "domain/ai/ml"
+    pub fn tag_for_folder(&self, folder: &str) -> String {
+        if self.organize_root == "/" {
+            folder.to_string()
+        } else {
+            format!("{}/{}", self.organize_root, folder)
         }
     }
 
