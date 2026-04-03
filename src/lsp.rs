@@ -767,10 +767,15 @@ impl KbaseLanguageServer {
 #[tower_lsp::async_trait]
 impl LanguageServer for KbaseLanguageServer {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        // Get workspace root
+        // Get workspace root and find vault root from there
         if let Some(root_uri) = params.root_uri {
-            if let Ok(path) = root_uri.to_file_path() {
-                *self.vault_path.write().unwrap() = Some(path);
+            if let Ok(workspace_path) = root_uri.to_file_path() {
+                // Try to find vault root by searching up from workspace
+                let vault_path = std::env::set_current_dir(&workspace_path)
+                    .ok()
+                    .and_then(|_| vault::find_vault_root().ok())
+                    .unwrap_or(workspace_path);
+                *self.vault_path.write().unwrap() = Some(vault_path);
             }
         }
 
