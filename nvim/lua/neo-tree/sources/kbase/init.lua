@@ -9,6 +9,9 @@ local events = require("neo-tree.events")
 
 local M = { name = "kbase" }
 
+-- "all": show all tags; "primary": show only primary tags (first tag of each note)
+local view_mode = "all"
+
 -- Helper to execute LSP command via coc or native
 local function lsp_execute(command, args, callback)
   if vim.fn.exists("*CocAction") == 1 then
@@ -145,11 +148,19 @@ local function load_notes_for_tag(state, node, callback)
   end)
 end
 
+-- Toggle between "all" and "primary" view modes and refresh
+M.toggle_view_mode = function(state)
+  view_mode = (view_mode == "all") and "primary" or "all"
+  vim.notify("kbase tags: " .. view_mode .. " tags", vim.log.levels.INFO)
+  manager.refresh(M.name)
+end
+
 -- Navigate/refresh the tree
 M.navigate = function(state, path, path_to_reveal, callback, async)
   state.loading = true
 
-  lsp_execute("kbase.tags", {}, function(result)
+  local primary_only = (view_mode == "primary")
+  lsp_execute("kbase.tags", { vim.NIL, false, primary_only }, function(result)
     state.loading = false
 
     if not result or not result.tags or #result.tags == 0 then

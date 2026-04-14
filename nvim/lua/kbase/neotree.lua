@@ -38,6 +38,7 @@ M.setup = function(opts)
         ["s"] = "open_split",
         ["v"] = "open_vsplit",
         ["r"] = "refresh",
+        ["p"] = "toggle_view_mode",
       },
     },
   }, existing.kbase or {})

@@ -62,10 +62,14 @@ cargo fmt --check        # Check formatting without changes
 # Vault management
 kbase init [path]             # Initialize vault
 kbase new "Note title"        # Create note (uses schema template)
+kbase new "Note title" --edit # Create note and open in $EDITOR
+kbase new "Note title" --tag topic/subtopic  # Create with tag
+kbase move "Old Title" "New Title"  # Rename note, updating all links
 
 # List and query
 kbase list                    # List all notes
-kbase list --tag recipe       # Filter by tag
+kbase list --tag recipe       # Filter by tag (includes subtags)
+kbase list --tag recipe --direct  # Filter by tag (exact match only)
 kbase tags                    # Show tag tree
 kbase tags --notes            # Show tag tree with notes
 kbase backlinks note-name     # Show incoming links
@@ -85,12 +89,14 @@ kbase convert markdown --dry-run  # Preview changes
 # Tag management
 kbase retag old/prefix new    # Rename tags: old/prefix/x -> new/x
 kbase retag old/prefix new --dry-run  # Preview tag changes
+kbase retag old/prefix new --move     # Also move files to match new tag paths
 kbase organize --tree domain  # Move notes into directories matching tag hierarchy
 kbase organize --dry-run      # Preview file moves
 kbase clean-tags              # Remove orphan tags from the graph
 
 # Validation
 kbase validate                # Validate against schema and detect broken links
+kbase validate --structure    # Also check that file locations match tag-based folder rules
 
 # Semantic search (requires ONNX model)
 kbase search "query"          # Semantic search across notes
@@ -170,13 +176,21 @@ With `include_context: true`, each chunk includes the note title and parent head
 
 Embeddings are cached in `.kbase/embeddings.redb` - only changed content is re-embedded.
 
+## Tags
+
+Tags are hierarchical paths (`cuisine/asian/thai`) that organize notes and form the knowledge graph's structure. A few conventions:
+
+- **Primary tag**: The *first* tag in a note's frontmatter is its primary tag. It determines folder placement (via `organize_root`) and is used for tag-note navigation.
+- **Tag slugification**: Tag segments are automatically slugified when stored in the graph — spaces and special characters become hyphens (e.g., `Machine Learning` → `machine-learning`). Frontmatter is not rewritten, but `kbase validate` will warn about tags with spaces.
+- **Tag notes**: Each tag path implies a note — `cuisine/asian/thai` points to a note titled "Thai" whose primary tag is `cuisine/asian`. Use Go to Definition on a tag in frontmatter to jump to its tag note (or create it).
+
 ## LSP Server
 
 kbase includes an LSP server for editor integration with features like:
 
 - **Go to definition**: Follow `[[wiki links]]` or `[markdown](links.md)` to target notes
-  - On tags: jumps to the tag note (e.g., `domain/ai` → opens "ai" note)
-  - Prompts to create note if it doesn't exist
+  - On tags: jumps to the *tag note* — matched by title (last segment) and primary tag (parent path). E.g., `cuisine/asian/thai` → note titled "Thai" with primary tag `cuisine/asian`.
+  - Prompts to create the note (with the correct primary tag pre-filled) if it doesn't exist.
 - **Find references**: Show all backlinks to the current note
 - **Hover**: Preview note content when hovering over links
 - **Completion**: Note titles on `[[` (wiki) and `[` (markdown), tag paths in frontmatter
@@ -258,6 +272,7 @@ require("kbase").setup()
 - Hierarchical tag tree with lazy-loaded children
 - Notes shown under their direct tags (no duplicates)
 - Press Enter to expand tags or open notes
+- Press `p` to toggle between **all tags** and **primary tags only** (only tags that are the first tag of at least one note)
 
 ## AI Assistant Skills
 

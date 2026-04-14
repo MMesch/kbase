@@ -1522,6 +1522,13 @@ impl KbaseLanguageServer {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Third argument: primary_only — only return tags used as the primary (first) tag
+        // of at least one note, plus their ancestors to preserve hierarchy.
+        let primary_only = params.arguments
+            .get(2)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         // Use persistent store
         let store = match self.get_or_init_store() {
             Ok(s) => s,
@@ -1544,7 +1551,7 @@ impl KbaseLanguageServer {
         };
 
         // Get flat list of all tag paths
-        let flat_tags = match store.all_tags() {
+        let mut flat_tags = match store.all_tags() {
             Ok(t) => t,
             Err(e) => {
                 self.client
@@ -1553,6 +1560,23 @@ impl KbaseLanguageServer {
                 return Ok(None);
             }
         };
+
+        if primary_only {
+            // Collect the slugified primary tag of every note plus all ancestor paths.
+            let notes = self.notes.read().unwrap();
+            let mut primary_set: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for n in notes.values() {
+                if let Some(primary_tag) = n.tags.first() {
+                    let parts: Vec<String> =
+                        primary_tag.split('/').map(note::slugify).collect();
+                    for i in 1..=parts.len() {
+                        primary_set.insert(parts[..i].join("/"));
+                    }
+                }
+            }
+            flat_tags.retain(|t| primary_set.contains(t));
+        }
 
         Ok(Some(serde_json::json!({
             "tree": tree,

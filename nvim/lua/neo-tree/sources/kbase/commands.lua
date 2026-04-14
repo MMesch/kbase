@@ -68,6 +68,12 @@ M.refresh = function(state)
   refresh()
 end
 
+-- Toggle between all-tags and primary-tags-only view
+M.toggle_view_mode = function(state)
+  local source = require("neo-tree.sources.kbase")
+  source.toggle_view_mode(state)
+end
+
 -- Inherit all common commands
 cc._add_common_commands(M, nil)
 
