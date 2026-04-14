@@ -1471,6 +1471,41 @@ impl KbaseLanguageServer {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Third argument: primary_only — only return notes where this tag is their first tag
+        let primary_only = params.arguments
+            .get(2)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if primary_only {
+            // Bypass the graph store: scan in-memory notes for those whose primary tag matches.
+            let slugified_filter = tag_filter.map(|t| {
+                t.split('/').map(note::slugify).collect::<Vec<_>>().join("/")
+            });
+            let notes = self.notes.read().unwrap();
+            let results: Vec<serde_json::Value> = notes
+                .values()
+                .filter(|n| {
+                    let primary_slug = n.tags.first().map(|t| {
+                        t.split('/').map(note::slugify).collect::<Vec<_>>().join("/")
+                    });
+                    match &slugified_filter {
+                        Some(f) => primary_slug.as_deref() == Some(f.as_str()),
+                        None => true,
+                    }
+                })
+                .filter_map(|n| {
+                    let uri = Url::from_file_path(&n.path).ok()?;
+                    Some(serde_json::json!({
+                        "title": n.title,
+                        "path": n.path.to_string_lossy(),
+                        "uri": uri.to_string()
+                    }))
+                })
+                .collect();
+            return Ok(Some(serde_json::json!(results)));
+        }
+
         // Use persistent store
         let store = match self.get_or_init_store() {
             Ok(s) => s,

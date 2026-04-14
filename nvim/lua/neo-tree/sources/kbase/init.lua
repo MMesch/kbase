@@ -115,8 +115,10 @@ local function load_notes_for_tag(state, node, callback)
       end
     end
 
-    -- Now get notes for this tag (direct_only=true to avoid duplicates in tree)
-    lsp_execute("kbase.notes", { full_tag, true }, function(result)
+    -- Now get notes for this tag.
+    -- direct_only=true avoids duplicates; primary_only mirrors the current view mode.
+    local primary_only = (view_mode == "primary")
+    lsp_execute("kbase.notes", { full_tag, true, primary_only }, function(result)
       local children = {}
 
       -- Add subtags first
@@ -148,10 +150,21 @@ local function load_notes_for_tag(state, node, callback)
   end)
 end
 
--- Toggle between "all" and "primary" view modes and refresh
+-- Toggle between "all" and "primary" view modes and rebuild the tree from scratch.
+-- A full re-navigate is needed so that already-expanded (cached) nodes re-fetch
+-- their children with the new mode.
 M.toggle_view_mode = function(state)
   view_mode = (view_mode == "all") and "primary" or "all"
   vim.notify("kbase tags: " .. view_mode .. " tags", vim.log.levels.INFO)
+  -- Reset all loaded state so children are re-fetched on next expand
+  if state and state.tree then
+    for _, node in ipairs(state.tree:get_nodes()) do
+      if node.type == "directory" then
+        node.loaded = false
+        node:collapse()
+      end
+    end
+  end
   manager.refresh(M.name)
 end
 
