@@ -1114,8 +1114,9 @@ fn main() -> Result<()> {
             let mut used_tags: std::collections::HashSet<String> = std::collections::HashSet::new();
             for n in &notes {
                 for tag in &n.tags {
-                    // Add the tag and all its ancestors
-                    let parts: Vec<&str> = tag.split('/').collect();
+                    // Add the tag and all its ancestors, slugifying each segment
+                    // to match how they are stored in the graph.
+                    let parts: Vec<String> = tag.split('/').map(note::slugify).collect();
                     for i in 1..=parts.len() {
                         used_tags.insert(parts[..i].join("/"));
                     }

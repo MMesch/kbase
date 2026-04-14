@@ -302,26 +302,34 @@ impl KbaseLanguageServer {
         }
     }
 
-    /// Find note by tag path: title matches last segment, primary tag matches parent path.
-    /// For a single-segment path (no '/'), falls back to title-only match.
+    /// Find note by tag path: slugified title matches last segment, slugified primary tag
+    /// matches parent path. For a single-segment path (no '/'), matches by slugified title only.
     fn find_note_by_tag_path(&self, tag_path: &str) -> Option<Note> {
         let notes = self.notes.read().unwrap();
+        let slugify_path = |p: &str| -> String {
+            p.split('/').map(note::slugify).collect::<Vec<_>>().join("/")
+        };
         match tag_path.rsplit_once('/') {
             Some((parent, leaf)) => {
-                let leaf_lower = leaf.to_lowercase();
+                let leaf_slug = note::slugify(leaf);
+                let parent_slug = slugify_path(parent);
                 notes
                     .values()
                     .find(|n| {
-                        n.title.to_lowercase() == leaf_lower
-                            && n.tags.first().map(|t| t.as_str()) == Some(parent)
+                        note::slugify(&n.title) == leaf_slug
+                            && n.tags
+                                .first()
+                                .map(|t| slugify_path(t))
+                                .as_deref()
+                                == Some(&parent_slug)
                     })
                     .cloned()
             }
             None => {
-                let tag_lower = tag_path.to_lowercase();
+                let slug = note::slugify(tag_path);
                 notes
                     .values()
-                    .find(|n| n.title.to_lowercase() == tag_lower)
+                    .find(|n| note::slugify(&n.title) == slug)
                     .cloned()
             }
         }

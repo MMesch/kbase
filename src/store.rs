@@ -11,7 +11,7 @@ use oxigraph::model::*;
 use oxigraph::sparql::QueryResults;
 use oxigraph::store::Store as OxiStore;
 
-use crate::note::Note;
+use crate::note::{self, Note};
 
 const KBASE_NS: &str = "http://kbase.local/";
 
@@ -478,7 +478,8 @@ impl Store {
     pub fn list_notes(&self, tag: Option<&str>, direct_only: bool) -> Result<Vec<String>> {
         let query = match tag {
             Some(tag) => {
-                let tag_iri = format!("{KBASE_NS}tag/{tag}");
+                let tag_iri = self.tag_iri(tag);
+                let tag_iri_str = tag_iri.as_str();
                 if direct_only {
                     // Query notes directly tagged with this specific tag only
                     format!(
@@ -489,7 +490,7 @@ impl Store {
                             ?note kb:type kb:Note .
                             ?note kb:title ?title .
                             ?note kb:path ?path .
-                            ?note kb:hasTag <{tag_iri}> .
+                            ?note kb:hasTag <{tag_iri_str}> .
                         }}
                         ORDER BY ?title
                         "#
@@ -505,7 +506,7 @@ impl Store {
                             ?note kb:title ?title .
                             ?note kb:path ?path .
                             ?note kb:hasTag ?tag .
-                            ?tag kb:parentTag* <{tag_iri}> .
+                            ?tag kb:parentTag* <{tag_iri_str}> .
                         }}
                         ORDER BY ?title
                         "#
@@ -937,7 +938,8 @@ impl Store {
     }
 
     fn tag_iri(&self, tag: &str) -> NamedNode {
-        NamedNode::new_unchecked(format!("{}tag/{}", KBASE_NS, tag))
+        let slugified = tag.split('/').map(note::slugify).collect::<Vec<_>>().join("/");
+        NamedNode::new_unchecked(format!("{}tag/{}", KBASE_NS, slugified))
     }
 
     fn iri(&self, local: &str) -> NamedNode {
