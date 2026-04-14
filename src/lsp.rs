@@ -302,6 +302,31 @@ impl KbaseLanguageServer {
         }
     }
 
+    /// Find note by tag path: title matches last segment, primary tag matches parent path.
+    /// For a single-segment path (no '/'), falls back to title-only match.
+    fn find_note_by_tag_path(&self, tag_path: &str) -> Option<Note> {
+        let notes = self.notes.read().unwrap();
+        match tag_path.rsplit_once('/') {
+            Some((parent, leaf)) => {
+                let leaf_lower = leaf.to_lowercase();
+                notes
+                    .values()
+                    .find(|n| {
+                        n.title.to_lowercase() == leaf_lower
+                            && n.tags.first().map(|t| t.as_str()) == Some(parent)
+                    })
+                    .cloned()
+            }
+            None => {
+                let tag_lower = tag_path.to_lowercase();
+                notes
+                    .values()
+                    .find(|n| n.title.to_lowercase() == tag_lower)
+                    .cloned()
+            }
+        }
+    }
+
     /// Find note by title (case-insensitive)
     fn find_note_by_title(&self, title: &str) -> Option<Note> {
         let notes = self.notes.read().unwrap();
@@ -706,8 +731,9 @@ impl KbaseLanguageServer {
         self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
     }
 
-    /// Ask user if they want to create a non-existent note, create it if yes
-    async fn offer_create_note(&self, title: &str) -> Option<Location> {
+    /// Ask user if they want to create a non-existent note, create it if yes.
+    /// If `tags` is non-empty it overrides the config default tags (used to set the primary tag).
+    async fn offer_create_note(&self, title: &str, tags: &[String]) -> Option<Location> {
         let response = self
             .client
             .show_message_request(
@@ -732,10 +758,12 @@ impl KbaseLanguageServer {
                 let cfg = Config::load(&vault_path).ok()?;
                 let notes_path = cfg.notes_path(&vault_path);
 
-                // Determine folder from tags based on organize_root
-                let folder = cfg.folder_for_tags(&cfg.new_note.tags);
+                let effective_tags = if tags.is_empty() { &cfg.new_note.tags } else { tags };
 
-                match note::create_with_schema(&notes_path, title, &cfg.new_note.tags, &cfg.new_note.fields, folder.as_deref()) {
+                // Determine folder from tags based on organize_root
+                let folder = cfg.folder_for_tags(effective_tags);
+
+                match note::create_with_schema(&notes_path, title, effective_tags, &cfg.new_note.fields, folder.as_deref()) {
                     Ok(note_path) => {
                         self.client
                             .log_message(MessageType::INFO, format!("Created {}", note_path.display()))
@@ -919,22 +947,26 @@ impl LanguageServer for KbaseLanguageServer {
         if let Some(content) = content {
             // Check for tag path (e.g., tech/ai/webchat) in frontmatter
             if let Some(tag_path) = self.get_tag_at_position(&content, position) {
-                // Primary action: navigate to the tag note (last segment of path)
-                // e.g., for "tech/ai/webchat", try to find "webchat" note
-                if let Some(tag_name) = tag_path.split('/').last() {
-                    if let Some(note) = self.find_note_by_title(tag_name) {
-                        let target_uri = Url::from_file_path(&note.path).ok();
-                        if let Some(target_uri) = target_uri {
-                            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                                uri: target_uri,
-                                range: Range::default(),
-                            })));
-                        }
-                    } else {
-                        // Tag note doesn't exist - ask if user wants to create it
-                        if let Some(location) = self.offer_create_note(tag_name).await {
-                            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
-                        }
+                // Navigate to the note whose title matches the last segment and whose
+                // primary tag matches the parent path (e.g. "cuisine/asian/thai" → note
+                // titled "thai" with primary tag "cuisine/asian").
+                if let Some(note) = self.find_note_by_tag_path(&tag_path) {
+                    let target_uri = Url::from_file_path(&note.path).ok();
+                    if let Some(target_uri) = target_uri {
+                        return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                            uri: target_uri,
+                            range: Range::default(),
+                        })));
+                    }
+                } else {
+                    // Tag note doesn't exist - ask if user wants to create it
+                    let leaf = tag_path.rsplit_once('/').map(|(_, l)| l).unwrap_or(&tag_path);
+                    let parent_tags: Vec<String> = tag_path
+                        .rsplit_once('/')
+                        .map(|(p, _)| vec![p.to_string()])
+                        .unwrap_or_default();
+                    if let Some(location) = self.offer_create_note(leaf, &parent_tags).await {
+                        return Ok(Some(GotoDefinitionResponse::Scalar(location)));
                     }
                 }
             }
@@ -972,7 +1004,7 @@ impl LanguageServer for KbaseLanguageServer {
                     }
                 } else {
                     // Note doesn't exist - ask if user wants to create it
-                    if let Some(location) = self.offer_create_note(&title_for_create).await {
+                    if let Some(location) = self.offer_create_note(&title_for_create, &[]).await {
                         return Ok(Some(GotoDefinitionResponse::Scalar(location)));
                     }
                 }
