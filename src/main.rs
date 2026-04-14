@@ -423,6 +423,24 @@ fn main() -> Result<()> {
             }
             timer.lap("schema validation");
 
+            // Tag segment normalization warnings
+            for n in &notes {
+                for tag in &n.tags {
+                    for segment in tag.split('/') {
+                        if segment.chars().any(|c| c == ' ') {
+                            println!(
+                                "{}:tags: segment '{}' in tag '{}' contains spaces (will be slugified to '{}')",
+                                n.path.display(),
+                                segment,
+                                tag,
+                                note::slugify(segment),
+                            );
+                            total_violations += 1;
+                        }
+                    }
+                }
+            }
+
             // Broken link detection
             let titles: std::collections::HashSet<String> = notes.iter()
                 .map(|n| n.title.to_lowercase())
