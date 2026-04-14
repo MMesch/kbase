@@ -423,6 +423,33 @@ fn main() -> Result<()> {
             }
             timer.lap("schema validation");
 
+            // Duplicate title warnings: plain [[Title]] links are ambiguous when multiple
+            // notes share a title. Notes are distinguished by primary_tag/Title.
+            {
+                let mut title_map: std::collections::HashMap<String, Vec<&note::Note>> =
+                    std::collections::HashMap::new();
+                for n in &notes {
+                    title_map.entry(n.title.to_lowercase()).or_default().push(n);
+                }
+                for (_, duplicates) in &title_map {
+                    if duplicates.len() > 1 {
+                        for n in duplicates {
+                            let id = match n.tags.first() {
+                                Some(t) => format!("{}/{}", t, n.title),
+                                None => n.title.clone(),
+                            };
+                            println!(
+                                "{}:title: ambiguous title '{}' — use '{}' in wiki links to disambiguate",
+                                n.path.display(),
+                                n.title,
+                                id,
+                            );
+                            total_violations += 1;
+                        }
+                    }
+                }
+            }
+
             // Tag segment normalization warnings
             for n in &notes {
                 for tag in &n.tags {

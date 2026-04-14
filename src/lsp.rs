@@ -335,8 +335,14 @@ impl KbaseLanguageServer {
         }
     }
 
-    /// Find note by title (case-insensitive)
+    /// Find note by title (case-insensitive).
+    /// If `title` contains '/', it is interpreted as "primary_tag_path/Title" and resolved
+    /// via `find_note_by_tag_path` — matching both the leaf title and the primary tag.
+    /// Otherwise a plain title-only match is used (backward-compatible for existing links).
     fn find_note_by_title(&self, title: &str) -> Option<Note> {
+        if title.contains('/') {
+            return self.find_note_by_tag_path(title);
+        }
         let notes = self.notes.read().unwrap();
         let title_lower = title.to_lowercase();
         notes
@@ -1141,11 +1147,19 @@ impl LanguageServer for KbaseLanguageServer {
                     let notes = self.notes.read().unwrap();
                     let items: Vec<CompletionItem> = notes
                         .values()
-                        .map(|note| CompletionItem {
-                            label: note.title.clone(),
-                            kind: Some(CompletionItemKind::FILE),
-                            detail: Some(note.path.to_string_lossy().to_string()),
-                            ..Default::default()
+                        .map(|note| {
+                            // Identify notes by "primary_tag/Title" when a primary tag exists,
+                            // falling back to plain "Title" for notes without tags.
+                            let label = match note.tags.first() {
+                                Some(primary) => format!("{}/{}", primary, note.title),
+                                None => note.title.clone(),
+                            };
+                            CompletionItem {
+                                label,
+                                kind: Some(CompletionItemKind::FILE),
+                                detail: Some(note.path.to_string_lossy().to_string()),
+                                ..Default::default()
+                            }
                         })
                         .collect();
 
