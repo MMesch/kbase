@@ -1589,7 +1589,7 @@ impl KbaseLanguageServer {
             }
         };
 
-        let tree = match store.list_tags(filter, show_notes) {
+        let tree = match store.list_tags(filter, show_notes, false) {
             Ok(t) => t,
             Err(e) => {
                 self.client

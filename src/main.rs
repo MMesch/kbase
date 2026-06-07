@@ -396,7 +396,7 @@ fn main() -> Result<()> {
         Commands::Tags { tag, notes } => {
             let vault_path = get_vault()?;
             let store = load_store(&vault_path, &mut timer)?;
-            let tree = store.list_tags(tag.as_deref(), notes)?;
+            let tree = store.list_tags(tag.as_deref(), notes, false)?;
             timer.lap("list_tags");
             for line in tree {
                 println!("{}", line);
@@ -782,12 +782,12 @@ fn main() -> Result<()> {
             println!("**Notes:** {}\n", notes.len());
 
             // Tag summary
-            let tags = store.list_tags(None, false)?;
+            let tags = store.list_tags(None, false, true)?;
             println!("**Tags:** {} unique tags\n", tags.len());
             if !tags.is_empty() {
-                println!("### Top-level tags\n");
-                for tag in tags.iter().filter(|t| !t.contains('/')) {
-                    println!("- {}", tag);
+                println!("### Tags\n");
+                for tag in &tags {
+                    println!("  {}", tag);
                 }
                 println!();
             }

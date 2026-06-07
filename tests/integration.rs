@@ -159,7 +159,7 @@ fn list_tags_returns_tree() {
     let vault_path = specs_path();
     let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
-    let tree = store.list_tags(None, false).expect("Failed to list tags");
+    let tree = store.list_tags(None, false, false).expect("Failed to list tags");
 
     // Should have some tags
     assert!(!tree.is_empty(), "Should have tags");
@@ -185,7 +185,7 @@ fn list_tags_with_notes() {
     let store = vault::load_fresh(&vault_path).expect("Failed to load specs vault");
 
     let tree = store
-        .list_tags(Some("spec/feature"), true)
+        .list_tags(Some("spec/feature"), true, false)
         .expect("Failed to list tags with notes");
 
     // Should show notes under the tag
@@ -940,7 +940,7 @@ fn clean_tags_detects_orphans_after_deletion() {
     store.upsert_note(&note2).expect("Failed to insert");
 
     // Both notes share "domain" ancestor
-    let tags_before = store.list_tags(None, false).expect("Failed to list");
+    let tags_before = store.list_tags(None, false, false).expect("Failed to list");
     assert!(tags_before.iter().any(|t| t == "domain"), "domain should exist");
 
     // Remove one note

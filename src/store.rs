@@ -579,7 +579,12 @@ impl Store {
     }
 
     /// List all tags as a tree structure, optionally filtered and with notes
-    pub fn list_tags(&self, filter: Option<&str>, show_notes: bool) -> Result<Vec<String>> {
+    pub fn list_tags(
+        &self,
+        filter: Option<&str>,
+        show_notes: bool,
+        show_counts: bool,
+    ) -> Result<Vec<String>> {
         // Query all tags and their parents
         let tags_query = format!(
             r#"
@@ -624,11 +629,11 @@ impl Store {
             }
         }
 
-        // Query notes per tag if showing notes
+        // Query notes per tag if showing notes or counts
         let mut tag_notes: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
 
-        if show_notes {
+        if show_notes || show_counts {
             let notes_query = format!(
                 r#"
                 PREFIX kb: <{KBASE_NS}>
@@ -682,6 +687,7 @@ impl Store {
                 &tag_children,
                 &tag_notes,
                 show_notes,
+                show_counts,
                 &mut output,
             );
         }
@@ -699,6 +705,7 @@ impl Store {
         tag_children: &std::collections::HashMap<String, Vec<String>>,
         tag_notes: &std::collections::HashMap<String, Vec<String>>,
         show_notes: bool,
+        show_counts: bool,
         output: &mut Vec<String>,
     ) {
         let connector = if is_root {
@@ -711,7 +718,13 @@ impl Store {
 
         // Display just the last segment of the tag
         let display_name = tag.rsplit('/').next().unwrap_or(tag);
-        output.push(format!("{}{}{}", prefix, connector, display_name));
+        let count_str = if show_counts {
+            let count = tag_notes.get(tag).map(|n| n.len()).unwrap_or(0);
+            format!(" ({})", count)
+        } else {
+            String::new()
+        };
+        output.push(format!("{}{}{}{}", prefix, connector, display_name, count_str));
 
         let child_tags = tag_children.get(tag);
         let notes = if show_notes { tag_notes.get(tag) } else { None };
@@ -752,6 +765,7 @@ impl Store {
                 tag_children,
                 tag_notes,
                 show_notes,
+                show_counts,
                 output,
             );
         }
