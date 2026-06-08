@@ -966,6 +966,59 @@ fn clean_tags_detects_orphans_after_deletion() {
     cleanup_temp_db(&db_path);
 }
 
+#[test]
+fn clean_tags_handles_space_containing_tags() {
+    let db_path = temp_db_path("clean-tags-spaces");
+    let store = Store::open(&db_path).expect("Failed to open store");
+
+    // Create notes with tags containing spaces (simulates tag-note feature
+    // where a note title like "Machine Learning" becomes a tag segment)
+    let note1 = note::Note {
+        title: "ML Notes".to_string(),
+        path: PathBuf::from("/tmp/ml-notes.md"),
+        tags: vec!["project/research/Machine Learning".to_string()],
+        tree_edges: vec![],
+        fields: Default::default(),
+        links: vec![],
+        typed_links: vec![],
+    };
+    store.upsert_note(&note1).expect("Failed to insert note1");
+
+    let note2 = note::Note {
+        title: "Deep Learning".to_string(),
+        path: PathBuf::from("/tmp/dl.md"),
+        tags: vec!["project/research/Deep Learning".to_string()],
+        tree_edges: vec![],
+        fields: Default::default(),
+        links: vec![],
+        typed_links: vec![],
+    };
+    store.upsert_note(&note2).expect("Failed to insert note2");
+
+    // Verify tags are stored slugified (spaces -> hyphens)
+    let all_tags = store.get_all_tag_paths().expect("Failed to get tag paths");
+    let has_slugified = all_tags.iter().any(|t| t == "project/research/machine-learning");
+    assert!(has_slugified, "Tag should be stored slugified, got: {:?}", all_tags);
+
+    // Remove notes, leaving orphan tags
+    store.remove_note("/tmp/ml-notes.md").expect("Failed to remove note1");
+    store.remove_note("/tmp/dl.md").expect("Failed to remove note2");
+
+    // All tags are orphans since no notes remain
+    let all_tags_after = store.get_all_tag_paths().expect("Failed to get tags");
+    let orphans = all_tags_after;
+
+    assert!(!orphans.is_empty(), "Should have orphan tags after deletion");
+
+    // remove_orphan_tag_nodes should succeed without crashing
+    let removed = store
+        .remove_orphan_tag_nodes(&orphans)
+        .expect("remove_orphan_tag_nodes should succeed with space-originating tags");
+    assert!(removed > 0, "Should have removed orphan tags");
+
+    cleanup_temp_db(&db_path);
+}
+
 // ============================================================================
 // Broken link detection tests
 // ============================================================================
