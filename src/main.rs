@@ -243,7 +243,7 @@ enum Commands {
     /// Markdown:  [Note Title](note-title.md) or [alias](note-title.md)
     /// Normalize: rewrite markdown link paths using the configured link_base
     Convert {
-        /// Target syntax: "wiki", "markdown", or "normalize"
+        /// Target syntax: "wiki", "markdown", "normalize", or "wiki-paths"
         to: String,
         /// Dry run - show changes without modifying files
         #[arg(long)]
@@ -1213,12 +1213,13 @@ fn main() -> Result<()> {
             let notes = vault::load_notes(&vault_path)?;
             let cfg = config::Config::load(&vault_path)?;
 
-            enum ConvertMode { ToMarkdown, ToWiki, Normalize }
+            enum ConvertMode { ToMarkdown, ToWiki, Normalize, ToWikiPaths }
             let mode = match to.to_lowercase().as_str() {
                 "markdown" | "md" => ConvertMode::ToMarkdown,
                 "wiki" => ConvertMode::ToWiki,
                 "normalize" | "norm" => ConvertMode::Normalize,
-                _ => anyhow::bail!("Unknown target: {}. Use 'wiki', 'markdown', or 'normalize'", to),
+                "wiki-paths" => ConvertMode::ToWikiPaths,
+                _ => anyhow::bail!("Unknown target: {}. Use 'wiki', 'markdown', 'normalize', or 'wiki-paths'", to),
             };
 
             let mut total_changes = 0;
@@ -1229,6 +1230,7 @@ fn main() -> Result<()> {
                     ConvertMode::ToMarkdown => convert_wiki_to_markdown(&content, &notes),
                     ConvertMode::ToWiki => convert_markdown_to_wiki(&content),
                     ConvertMode::Normalize => normalize_markdown_links(&content, &n.path, &notes, &vault_path, cfg.link_base),
+                    ConvertMode::ToWikiPaths => convert_markdown_to_wiki_paths(&content),
                 };
 
                 if content != new_content {
@@ -1406,6 +1408,37 @@ fn convert_markdown_to_wiki(content: &str) -> String {
             format!("[[{}|{}]]", title, text)
         } else {
             format!("[[{}]]", title)
+        }
+    })
+    .to_string()
+}
+
+/// Convert markdown links to GitHub wiki-compatible wikilinks.
+/// Transforms `[text](/path/to/page.md)` into `[[path/to/page|text]]`
+/// (strips leading `/`, strips `.md` extension, preserves path hierarchy).
+fn convert_markdown_to_wiki_paths(content: &str) -> String {
+    use regex::Regex;
+
+    // Match [Text](path.md) - only .md files, not http links
+    let re = Regex::new(r"\[([^\]]+)\]\(([^)]+\.md)\)").unwrap();
+
+    re.replace_all(content, |caps: &regex::Captures| {
+        let text = &caps[1];
+        let path = &caps[2];
+
+        // Strip leading slash and .md extension for wiki-compatible path
+        let wiki_path = path
+            .trim_start_matches('/')
+            .trim_end_matches(".md");
+
+        if wiki_path.is_empty() {
+            return caps[0].to_string();
+        }
+
+        if text == wiki_path {
+            format!("[[{}]]", wiki_path)
+        } else {
+            format!("[[{}|{}]]", wiki_path, text)
         }
     })
     .to_string()
@@ -1672,6 +1705,34 @@ mod tests {
         let content = "See [this note](my-note.md) for details.";
         let result = convert_markdown_to_wiki(content);
         assert_eq!(result, "See [[My Note|this note]] for details.");
+    }
+
+    #[test]
+    fn convert_markdown_to_wiki_paths_basic() {
+        let content = "See [text](/knowledge/ecosystem/jupyter.md) for details.";
+        let result = convert_markdown_to_wiki_paths(content);
+        assert_eq!(result, "See [[knowledge/ecosystem/jupyter|text]] for details.");
+    }
+
+    #[test]
+    fn convert_markdown_to_wiki_paths_nested() {
+        let content = "[overview](/knowledge/quantstack/overview.md)";
+        let result = convert_markdown_to_wiki_paths(content);
+        assert_eq!(result, "[[knowledge/quantstack/overview|overview]]");
+    }
+
+    #[test]
+    fn convert_markdown_to_wiki_paths_no_slash() {
+        let content = "See [note](readme.md)";
+        let result = convert_markdown_to_wiki_paths(content);
+        assert_eq!(result, "See [[readme|note]]");
+    }
+
+    #[test]
+    fn convert_markdown_to_wiki_paths_alias_matches() {
+        let content = "[[wiki/path|Display Text]] is already wiki.";
+        let result = convert_markdown_to_wiki_paths(content);
+        assert_eq!(result, content);  // Should not touch existing wikilinks
     }
 
     #[test]
