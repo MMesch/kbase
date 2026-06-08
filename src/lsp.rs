@@ -1155,21 +1155,55 @@ impl LanguageServer for KbaseLanguageServer {
                 // Check if we're inside [[
                 if before_cursor.ends_with("[[") || (before_cursor.contains("[[") && !before_cursor.contains("]]")) {
                     let notes = self.notes.read().unwrap();
+                    let vault_root = self.vault_path.read().unwrap().clone();
                     let items: Vec<CompletionItem> = notes
                         .values()
-                        .map(|note| {
-                            // Identify notes by "primary_tag/Title" when a primary tag exists,
-                            // falling back to plain "Title" for notes without tags.
-                            let label = match note.tags.first() {
-                                Some(primary) => format!("{}/{}", primary, note.title),
-                                None => note.title.clone(),
-                            };
-                            CompletionItem {
-                                label,
-                                kind: Some(CompletionItemKind::FILE),
-                                detail: Some(note.path.to_string_lossy().to_string()),
-                                ..Default::default()
+                        .flat_map(|note| {
+                            let mut completions: Vec<CompletionItem> = Vec::new();
+
+                            // Wiki-paths format: vault-relative file path (e.g. "ecosystem/jupyter")
+                            if let Some(ref vp) = vault_root {
+                                if let Ok(rel) = note.path.strip_prefix(vp) {
+                                    if let Some(stem) = rel.file_stem().and_then(|s| s.to_str()) {
+                                        let dir = rel.parent().and_then(|p| p.to_str()).unwrap_or("");
+                                        let wiki_path = if dir.is_empty() {
+                                            stem.to_string()
+                                        } else {
+                                            format!("{}/{}", dir, stem)
+                                        };
+                                        completions.push(CompletionItem {
+                                            label: wiki_path,
+                                            kind: Some(CompletionItemKind::FILE),
+                                            detail: Some(note.title.clone()),
+                                            filter_text: Some(format!("{} {}", stem, note.title)),
+                                            ..Default::default()
+                                        });
+                                    }
+                                }
                             }
+
+                            // Tag-path format: "primary_tag/Title" (existing behavior)
+                            match note.tags.first() {
+                                Some(primary) => {
+                                    completions.push(CompletionItem {
+                                        label: format!("{}/{}", primary, note.title),
+                                        kind: Some(CompletionItemKind::FILE),
+                                        detail: Some(note.path.to_string_lossy().to_string()),
+                                        filter_text: Some(format!("{} {}", note.title, primary)),
+                                        ..Default::default()
+                                    });
+                                }
+                                None => {
+                                    completions.push(CompletionItem {
+                                        label: note.title.clone(),
+                                        kind: Some(CompletionItemKind::FILE),
+                                        detail: Some(note.path.to_string_lossy().to_string()),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+
+                            completions
                         })
                         .collect();
 
