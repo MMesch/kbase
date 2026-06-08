@@ -1144,12 +1144,22 @@ fn main() -> Result<()> {
                 println!("Renamed: {} -> {}", from_rel.display(), to_rel.display());
             }
 
-            // Update links in other notes
+            // Update links in other notes whenever the title changes
+            if source.title != new_title {
+                let updated = update_wikilinks_after_rename(
+                    &vault_path, &notes_path, &source.title, new_title, dry_run,
+                )?;
+                if updated > 0 {
+                    println!("{} wikilink(s) {}", updated, if dry_run { "would be updated" } else { "updated" });
+                }
+            }
+
+            // Update markdown links if the path changed
             if new_path != source.path {
                 let moves = vec![(source.path.clone(), new_path.clone(), source.title.clone())];
                 let link_updates = update_links_after_moves(&vault_path, &moves, dry_run)?;
                 if link_updates > 0 {
-                    println!("{} link(s) {}", link_updates, if dry_run { "would be updated" } else { "updated" });
+                    println!("{} markdown link(s) {}", link_updates, if dry_run { "would be updated" } else { "updated" });
                 }
             }
         }
@@ -1586,6 +1596,50 @@ fn update_links_after_moves(
     Ok(total_updates)
 }
 
+/// Update wikilinks [[Old Title]] and [[Old Title|...]] across all notes after a rename
+fn update_wikilinks_after_rename(
+    _vault_path: &Path,
+    notes_path: &Path,
+    old_title: &str,
+    new_title: &str,
+    dry_run: bool,
+) -> Result<usize> {
+    use regex::Regex;
+
+    // Escape regex special characters in the old title
+    let escaped_old = regex::escape(old_title);
+    // Match [[Old Title]] or [[Old Title|alias]], allowing optional whitespace around the title
+    let pattern = format!(r"\[\[\s*{}\s*(\|[^\]]+)?\]\]", escaped_old);
+    let re = Regex::new(&pattern).unwrap();
+
+    let mut total_updates = 0;
+
+    for entry in walkdir::WalkDir::new(notes_path)
+        .into_iter()
+        .filter_entry(|e| !e.file_name().to_str().is_some_and(|s| s.starts_with('.')))
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.extension().is_some_and(|ext| ext == "md") {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(path)?;
+        if re.is_match(&content) {
+            let new_content = re.replace_all(&content, |caps: &regex::Captures| {
+                let alias = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                format!("[[{}{}]]", new_title, alias)
+            });
+            total_updates += 1;
+            if !dry_run {
+                std::fs::write(path, new_content.as_ref())?;
+            }
+        }
+    }
+
+    Ok(total_updates)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1633,6 +1687,62 @@ mod tests {
         let content = "See [website](https://example.com) for details.";
         let result = convert_markdown_to_wiki(content);
         assert_eq!(result, content);  // Should not convert http links
+    }
+
+    #[test]
+    fn update_wikilinks_basic_rename() {
+        let dir = std::env::temp_dir().join(format!("kbase-test-wikilinks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("note1.md"), "See [[Old Title]] for details.").unwrap();
+        std::fs::write(dir.join("note2.md"), "Also [[Old Title|an alias]] here.").unwrap();
+        std::fs::write(dir.join("note3.md"), "No link to old title here.").unwrap();
+
+        let result = update_wikilinks_after_rename(
+            &PathBuf::from("/fake/vault"),
+            &dir,
+            "Old Title",
+            "New Title",
+            false,
+        ).unwrap();
+
+        assert_eq!(result, 2, "Should update 2 files");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("note1.md")).unwrap(),
+            "See [[New Title]] for details."
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("note2.md")).unwrap(),
+            "Also [[New Title|an alias]] here."
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("note3.md")).unwrap(),
+            "No link to old title here."
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn update_wikilinks_preserves_other_content() {
+        let dir = std::env::temp_dir().join(format!("kbase-test-wikilinks2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let content = "# Header\n\nText with [[Old Title]] link.\n\nAnother [[Something Else]] stays.\n\n[[Old Title|alias]] too.";
+        std::fs::write(dir.join("test.md"), content).unwrap();
+
+        let result = update_wikilinks_after_rename(
+            &PathBuf::from("/fake/vault"),
+            &dir,
+            "Old Title",
+            "New Title",
+            false,
+        ).unwrap();
+
+        assert_eq!(result, 1);
+        let updated = std::fs::read_to_string(dir.join("test.md")).unwrap();
+        assert!(updated.contains("[[New Title]]"), "Should update simple wikilink");
+        assert!(updated.contains("[[New Title|alias]]"), "Should update aliased wikilink");
+        assert!(updated.contains("[[Something Else]]"), "Should preserve unrelated wikilink");
+        assert!(updated.contains("# Header"), "Should preserve headers");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
