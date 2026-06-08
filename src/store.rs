@@ -1292,8 +1292,7 @@ EXAMPLE QUERIES:
     /// (e.g., `link_type = Some("depends_on")`).
     pub fn export_dot(&self, link_type: Option<&str>) -> Result<String> {
         let mut dot = String::from("digraph vault {\n");
-        dot.push_str("  rankdir=LR;\n");
-        dot.push_str("  node [shape=box];\n\n");
+        dot.push_str("  rankdir=LR;\n\n");
 
         let note_prefix = format!("{}note/", KBASE_NS);
         let field_prefix = format!("{}field/", KBASE_NS);
@@ -1353,8 +1352,10 @@ EXAMPLE QUERIES:
             }
         } else {
             // --- Unfiltered mode: all links and tree edges ---
+            let mut all_nodes: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut edges: Vec<String> = Vec::new();
 
-            // Get all notes
+            // Phase 1: Collect all nodes from notes
             let query = format!(
                 r#"
                 PREFIX kb: <{KBASE_NS}>
@@ -1372,20 +1373,66 @@ EXAMPLE QUERIES:
                     if let (Some(Term::Literal(title)), Some(Term::Literal(path))) =
                         (solution.get("title"), solution.get("path"))
                     {
-                        notes.push((title.value().to_string(), path.value().to_string()));
+                        let t = title.value().to_string();
+                        let p = path.value().to_string();
+                        all_nodes.insert(t.clone());
+                        notes.push((t, p));
                     }
                 }
             }
 
-            dot.push_str("  // Notes\n");
-            for (title, _path) in &notes {
-                let escaped = title.replace('"', "\\\"");
-                let id = Self::dot_id(title);
-                dot.push_str(&format!("  {} [label=\"{}\"];\n", id, escaped));
+            // Phase 2: Collect tree edge nodes (non-note nodes like tag hierarchy)
+            let tree_query = format!(
+                r#"
+                PREFIX kb: <{KBASE_NS}>
+                SELECT ?child ?pred ?parent WHERE {{
+                    ?child ?pred ?parent .
+                    FILTER(STRSTARTS(STR(?pred), "{KBASE_NS}child/"))
+                }}
+                "#
+            );
+
+            let mut tree_edges: Vec<(String, String, String)> = Vec::new();
+            if let QueryResults::Solutions(solutions) = self.inner.query(&tree_query)? {
+                for solution in solutions.flatten() {
+                    if let (
+                        Some(Term::NamedNode(child)),
+                        Some(Term::NamedNode(pred)),
+                        Some(Term::NamedNode(parent)),
+                    ) = (solution.get("child"), solution.get("pred"), solution.get("parent"))
+                    {
+                        if let (Some(child_enc), Some(parent_enc), Some(tree)) = (
+                            child.as_str().strip_prefix(&note_prefix),
+                            parent.as_str().strip_prefix(&note_prefix),
+                            pred.as_str().strip_prefix(&pred_prefix),
+                        ) {
+                            let child_title = urlencoding::decode(child_enc).unwrap_or_default();
+                            let parent_title = urlencoding::decode(parent_enc).unwrap_or_default();
+                            all_nodes.insert(child_title.to_string());
+                            all_nodes.insert(parent_title.to_string());
+                            tree_edges.push((child_title.to_string(), parent_title.to_string(), tree.to_string()));
+                        }
+                    }
+                }
             }
 
-            // Get wiki links between notes
-            dot.push_str("\n  // Links\n");
+            // Phase 3: Write all node declarations
+            dot.push_str("  // Nodes\n");
+            let mut sorted_nodes: Vec<&String> = all_nodes.iter().collect();
+            sorted_nodes.sort();
+            for title in &sorted_nodes {
+                let escaped = title.replace('"', "\\\"");
+                let id = Self::dot_id(title);
+                let is_note = notes.iter().any(|(t, _)| t == *title);
+                if is_note {
+                    dot.push_str(&format!("  {} [label=\"{}\", shape=box];\n", id, escaped));
+                } else {
+                    dot.push_str(&format!("  {} [label=\"{}\", shape=oval, style=filled, fillcolor=lightgray, fontsize=10];\n", id, escaped));
+                }
+            }
+
+            // Phase 4: Write edges
+            // Links between notes
             let link_query = format!(
                 r#"
                 PREFIX kb: <{KBASE_NS}>
@@ -1397,6 +1444,7 @@ EXAMPLE QUERIES:
                 "#
             );
 
+            let mut link_count = 0;
             if let QueryResults::Solutions(solutions) = self.inner.query(&link_query)? {
                 for solution in solutions.flatten() {
                     if let (Some(Term::Literal(from)), Some(Term::Literal(target))) =
@@ -1404,16 +1452,19 @@ EXAMPLE QUERIES:
                     {
                         let from_id = Self::dot_id(from.value());
                         let to_id = Self::dot_id(target.value());
-                        dot.push_str(&format!(
-                            "  {} -> {} [style=dashed, color=gray];\n",
-                            from_id, to_id
-                        ));
+                        edges.push(format!("  {} -> {} [style=dashed, color=gray];\n", from_id, to_id));
+                        link_count += 1;
                     }
                 }
             }
+            if link_count > 0 {
+                dot.push_str("\n  // Links\n");
+                for e in &edges[..link_count] {
+                    dot.push_str(e);
+                }
+            }
 
-            // Get typed frontmatter links
-            dot.push_str("\n  // Typed frontmatter links\n");
+            // Typed frontmatter links
             let typed_query = format!(
                 r#"
                 PREFIX kb: <{KBASE_NS}>
@@ -1427,6 +1478,7 @@ EXAMPLE QUERIES:
                 "#
             );
 
+            let typed_start = edges.len();
             if let QueryResults::Solutions(solutions) = self.inner.query(&typed_query)? {
                 for solution in solutions.flatten() {
                     if let (
@@ -1444,51 +1496,30 @@ EXAMPLE QUERIES:
                             .unwrap_or("link");
                         let from_id = Self::dot_id(from.value());
                         let to_id = Self::dot_id(to.value());
-                        dot.push_str(&format!(
+                        edges.push(format!(
                             "  {} -> {} [label=\"{}\", color=red];\n",
-                            from_id,
-                            to_id,
-                            field_name.replace('"', "\\\"")
+                            from_id, to_id, field_name.replace('"', "\\\"")
                         ));
                     }
                 }
             }
+            if edges.len() > typed_start {
+                dot.push_str("\n  // Typed frontmatter links\n");
+                for e in &edges[typed_start..] {
+                    dot.push_str(e);
+                }
+            }
 
-            // Get tree edges
-            dot.push_str("\n  // Tree edges\n");
-            let tree_query = format!(
-                r#"
-                PREFIX kb: <{KBASE_NS}>
-                SELECT ?child ?pred ?parent WHERE {{
-                    ?child ?pred ?parent .
-                    FILTER(STRSTARTS(STR(?pred), "{KBASE_NS}child/"))
-                }}
-                "#
-            );
-
-            if let QueryResults::Solutions(solutions) = self.inner.query(&tree_query)? {
-                for solution in solutions.flatten() {
-                    if let (
-                        Some(Term::NamedNode(child)),
-                        Some(Term::NamedNode(pred)),
-                        Some(Term::NamedNode(parent)),
-                    ) = (solution.get("child"), solution.get("pred"), solution.get("parent"))
-                    {
-                        if let (Some(child_enc), Some(parent_enc), Some(tree)) = (
-                            child.as_str().strip_prefix(&note_prefix),
-                            parent.as_str().strip_prefix(&note_prefix),
-                            pred.as_str().strip_prefix(&pred_prefix),
-                        ) {
-                            let child_title = urlencoding::decode(child_enc).unwrap_or_default();
-                            let parent_title = urlencoding::decode(parent_enc).unwrap_or_default();
-                            let child_id = Self::dot_id(&child_title);
-                            let parent_id = Self::dot_id(&parent_title);
-                            dot.push_str(&format!(
-                                "  {} -> {} [label=\"{}\", color=blue];\n",
-                                child_id, parent_id, tree
-                            ));
-                        }
-                    }
+            // Tree edges
+            if !tree_edges.is_empty() {
+                dot.push_str("\n  // Tree edges\n");
+                for (child, parent, tree) in &tree_edges {
+                    let child_id = Self::dot_id(child);
+                    let parent_id = Self::dot_id(parent);
+                    dot.push_str(&format!(
+                        "  {} -> {} [label=\"{}\", color=blue];\n",
+                        child_id, parent_id, tree
+                    ));
                 }
             }
         }
