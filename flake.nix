@@ -37,6 +37,7 @@
         LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
         CXX = "${pkgs.clang}/bin/clang++";
         CC = "${pkgs.clang}/bin/clang";
+        RUST_MIN_STACK = "16777216";
       };
 
       # Filter source - include Rust files plus test fixtures
@@ -120,6 +121,7 @@
         ];
 
         LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+        RUST_MIN_STACK = "16777216";
 
         shellHook = ''
           echo "kg development environment ready"
