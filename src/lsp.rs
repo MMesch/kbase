@@ -989,7 +989,17 @@ impl LanguageServer for KbaseLanguageServer {
             if let Some(link_target) = self.get_link_at_position(&content, position) {
                 let (note, title_for_create) = match &link_target {
                     LinkTarget::Title(title) => {
-                        (self.find_note_by_title(title), title.clone())
+                        // For wikilinks with '/', try slug (file path) resolution first,
+                        // then fall back to tag-path resolution (existing behavior).
+                        // This supports both wiki-paths (e.g. [[path/to/page]])
+                        // and tag-paths (e.g. [[primary_tag/Title]]).
+                        let note = if title.contains('/') {
+                            self.find_note_by_slug(title)
+                                .or_else(|| self.find_note_by_title(title))
+                        } else {
+                            self.find_note_by_title(title)
+                        };
+                        (note, title.clone())
                     }
                     LinkTarget::Slug(slug) => {
                         // For markdown links, search by slug first, then by title
