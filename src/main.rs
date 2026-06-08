@@ -173,6 +173,12 @@ enum Commands {
         /// Filter to only show links of this frontmatter field type (e.g., depends_on)
         #[arg(long)]
         link_type: Option<String>,
+        /// Hide tag hierarchy nodes and edges, show only note-to-note links
+        #[arg(long)]
+        hide_tags: bool,
+        /// Hide note-to-note links, show only tag hierarchy
+        #[arg(long)]
+        hide_links: bool,
     },
     /// Show vault overview (tags, link structure, key notes)
     Overview {
@@ -752,12 +758,12 @@ fn main() -> Result<()> {
             let cwd = std::env::current_dir()?;
             println!("\nSkills installed to {}/.claude/skills/", cwd.display());
         }
-        Commands::Export { format, output, link_type } => {
+        Commands::Export { format, output, link_type, hide_tags, hide_links } => {
             let vault_path = get_vault()?;
             let store = load_store(&vault_path, &mut timer)?;
 
             let content = match format.as_str() {
-                "dot" => store.export_dot(link_type.as_deref())?,
+                "dot" => store.export_dot(link_type.as_deref(), hide_tags, hide_links)?,
                 "graphml" => store.export_graphml()?,
                 _ => anyhow::bail!("Unknown format: {}. Use 'dot' or 'graphml'", format),
             };
