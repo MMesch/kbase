@@ -1313,12 +1313,23 @@ fn convert_wiki_to_markdown(
 ) -> String {
     use regex::Regex;
 
-    // Build title -> link path map
+    // Build title -> link path map (by title)
     let title_to_path: std::collections::HashMap<String, String> = notes
         .iter()
         .map(|n| {
             let path = note::link_path(&n.path, current_file, link_base, Some(vault_path));
             (n.title.to_lowercase(), path)
+        })
+        .collect();
+
+    // Build slug -> link path map (by vault-relative stem)
+    let slug_to_path: std::collections::HashMap<String, String> = notes
+        .iter()
+        .filter_map(|n| {
+            let path = note::link_path(&n.path, current_file, link_base, Some(vault_path));
+            n.path.strip_prefix(vault_path).ok().and_then(|rel| {
+                rel.to_str().map(|r| (r.trim_end_matches(".md").to_lowercase(), path))
+            })
         })
         .collect();
 
@@ -1330,11 +1341,25 @@ fn convert_wiki_to_markdown(
         let alias = caps.get(2).map(|m| m.as_str());
         let display = alias.unwrap_or(title);
 
-        // Find path for this title, or generate from title if note doesn't exist
-        let path = title_to_path
-            .get(&title.to_lowercase())
-            .cloned()
-            .unwrap_or_else(|| format!("{}.md", note::slugify(title)));
+        // Find path for this target. For wiki-paths targets (containing /),
+        // try slug lookup first, then fall back to path generation.
+        let path = if title.contains('/') {
+            slug_to_path
+                .get(&title.to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| {
+                    // Generate a path preserving directory structure,
+                    // slugifying only the leaf filename
+                    let (dir, leaf) = title.rsplit_once('/').unwrap();
+                    let filename = note::slugify(leaf);
+                    format!("{}/{}.md", dir, filename)
+                })
+        } else {
+            title_to_path
+                .get(&title.to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| format!("{}.md", note::slugify(title)))
+        };
 
         format!("[{}]({})", display, path)
     })
@@ -1697,6 +1722,16 @@ mod tests {
         let vault = PathBuf::from("/fake/vault");
         let result = convert_wiki_to_markdown(content, &vault, &notes, &vault, config::LinkBase::Relative);
         assert_eq!(result, "See [this note](my-note.md) for details.");
+    }
+
+    #[test]
+    fn convert_wiki_to_markdown_path_target() {
+        // Wiki-paths format: preserves directory structure, slugifies only leaf
+        let content = "See [[knowledge/ecosystem/arrow/sparrow|sparrow]].";
+        let notes = vec![];
+        let vault = PathBuf::from("/fake/vault");
+        let result = convert_wiki_to_markdown(content, &vault, &notes, &vault, config::LinkBase::Relative);
+        assert_eq!(result, "See [sparrow](knowledge/ecosystem/arrow/sparrow.md).");
     }
 
     #[test]
