@@ -593,7 +593,7 @@ fn export_dot_includes_notes_and_edges() {
     };
     store.upsert_note(&note2).expect("Failed to insert");
 
-    let dot = store.export_dot(None, false, false, None).expect("Failed to export DOT");
+    let dot = store.export_dot(None, false, false, None, 10.0, 0.0).expect("Failed to export DOT");
 
     // Check DOT structure
     assert!(dot.starts_with("digraph vault {"), "Should be valid DOT");

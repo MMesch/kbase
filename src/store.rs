@@ -1291,12 +1291,12 @@ EXAMPLE QUERIES:
     /// If `link_type` is provided, only typed links from that frontmatter field are shown
     /// (e.g., `link_type = Some("depends_on")`).
     /// If `tag_filter` is provided, only notes under that tag subtree are included.
-    pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool, tag_filter: Option<&str>) -> Result<String> {
+    pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool, tag_filter: Option<&str>, link_weight: f64, tree_weight: f64) -> Result<String> {
         let mut dot = String::from("digraph vault {\n");
         dot.push_str("  rankdir=LR;\n");
         dot.push_str("  outputorder=edgesfirst;\n");
         dot.push_str(
-            "  // Legend: box = note, oval/grey = tag, dashed = link (weight=10), blue = tree edge (weight=0)\n"
+            "  // Legend: box = note, oval/grey = tag, dashed = link, blue = tree edge\n"
         );
         dot.push_str("\n");
 
@@ -1531,7 +1531,7 @@ EXAMPLE QUERIES:
                             };
                     if let Some(resolved_title) = resolved {
                         let to_id = Self::dot_id(resolved_title);
-                        link_edges.push(format!("  {} -> {} [style=dashed, color=gray, weight=10];\n", from_id, to_id));
+                        link_edges.push(format!("  {} -> {} [style=dashed, color=gray, weight={}];\n", from_id, to_id, link_weight));
                             }
                         }
                     }
@@ -1596,8 +1596,8 @@ EXAMPLE QUERIES:
                     let child_id = Self::dot_id(child);
                     let parent_id = Self::dot_id(parent);
                     dot.push_str(&format!(
-                        "  {} -> {} [label=\"{}\", color=blue, weight=0];\n",
-                        child_id, parent_id, tree
+                        "  {} -> {} [label=\"{}\", color=blue, weight={}];\n",
+                        child_id, parent_id, tree, tree_weight
                     ));
                 }
             }

@@ -182,6 +182,12 @@ enum Commands {
         /// Filter to notes under this tag subtree (includes descendant tags)
         #[arg(long)]
         tag: Option<String>,
+        /// Edge weight for note-to-note links (default: 10)
+        #[arg(long, default_value = "10")]
+        link_weight: f64,
+        /// Edge weight for tag tree edges (default: 0)
+        #[arg(long, default_value = "0")]
+        tree_weight: f64,
     },
     /// Show vault overview (tags, link structure, key notes)
     Overview {
@@ -761,12 +767,12 @@ fn main() -> Result<()> {
             let cwd = std::env::current_dir()?;
             println!("\nSkills installed to {}/.claude/skills/", cwd.display());
         }
-        Commands::Export { format, output, link_type, hide_tags, hide_links, tag } => {
+        Commands::Export { format, output, link_type, hide_tags, hide_links, tag, link_weight, tree_weight } => {
             let vault_path = get_vault()?;
             let store = load_store(&vault_path, &mut timer)?;
 
             let content = match format.as_str() {
-                "dot" => store.export_dot(link_type.as_deref(), hide_tags, hide_links, tag.as_deref())?,
+                "dot" => store.export_dot(link_type.as_deref(), hide_tags, hide_links, tag.as_deref(), link_weight, tree_weight)?,
                 "graphml" => store.export_graphml()?,
                 _ => anyhow::bail!("Unknown format: {}. Use 'dot' or 'graphml'", format),
             };
