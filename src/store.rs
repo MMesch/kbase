@@ -1295,7 +1295,11 @@ EXAMPLE QUERIES:
     pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool) -> Result<String> {
         let mut dot = String::from("digraph vault {\n");
         dot.push_str("  rankdir=LR;\n");
-        dot.push_str("  outputorder=edgesfirst;\n\n");
+        dot.push_str("  outputorder=edgesfirst;\n");
+        dot.push_str(
+            "  // Legend: box = note, oval/grey = tag, dashed = link, blue = tree edge\n"
+        );
+        dot.push_str("\n");
 
         let note_prefix = format!("{}note/", KBASE_NS);
         let field_prefix = format!("{}field/", KBASE_NS);
@@ -1333,7 +1337,6 @@ EXAMPLE QUERIES:
                 }
             }
 
-            dot.push_str("  // Notes\n");
             let mut nodes: Vec<String> = node_set.into_iter().collect();
             nodes.sort();
             for title in &nodes {
@@ -1422,7 +1425,6 @@ EXAMPLE QUERIES:
             }
 
             // Phase 3: Write all node declarations
-            dot.push_str("  // Nodes\n");
             let mut sorted_nodes: Vec<&String> = all_nodes.iter().collect();
             sorted_nodes.sort();
             for title in &sorted_nodes {
@@ -1486,7 +1488,6 @@ EXAMPLE QUERIES:
                     }
                 }
                 if !link_edges.is_empty() {
-                    dot.push_str("\n  // Links\n");
                     for e in &link_edges {
                         dot.push_str(e);
                     }
@@ -1534,7 +1535,6 @@ EXAMPLE QUERIES:
                     }
                 }
                 if !typed_edges.is_empty() {
-                    dot.push_str("\n  // Typed frontmatter links\n");
                     for e in &typed_edges {
                         dot.push_str(e);
                     }
@@ -1543,7 +1543,6 @@ EXAMPLE QUERIES:
 
             // Tree edges
             if !hide_tags && !tree_edges.is_empty() {
-                dot.push_str("\n  // Tree edges\n");
                 for (child, parent, tree) in &tree_edges {
                     let child_id = Self::dot_id(child);
                     let parent_id = Self::dot_id(parent);
