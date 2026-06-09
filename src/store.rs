@@ -1291,7 +1291,7 @@ EXAMPLE QUERIES:
     /// If `link_type` is provided, only typed links from that frontmatter field are shown
     /// (e.g., `link_type = Some("depends_on")`).
     /// If `tag_filter` is provided, only notes under that tag subtree are included.
-    pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool, tag_filter: Option<&str>, link_weight: f64, tree_weight: f64) -> Result<String> {
+    pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool, tag_filter: Option<&str>, link_weight: f64, tree_weight: f64, hide_tree_labels: bool, color_trees: bool) -> Result<String> {
         let mut dot = String::from("digraph vault {\n");
         dot.push_str("  rankdir=LR;\n");
         dot.push_str("  outputorder=edgesfirst;\n");
@@ -1592,13 +1592,41 @@ EXAMPLE QUERIES:
 
             // Tree edges
             if !hide_tags && !tree_edges.is_empty() {
+                // Categorical color palette for distinct tag trees
+                let tree_colors: &[&str] = &[
+                    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+                ];
+
+                // Assign colors to unique tree names
+                let mut tree_names: Vec<&String> = tree_edges.iter().map(|(_, _, t)| t).collect();
+                tree_names.sort();
+                tree_names.dedup();
+                let color_map: std::collections::HashMap<&str, &str> = tree_names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| (name.as_str(), tree_colors[i % tree_colors.len()]))
+                    .collect();
+
                 for (child, parent, tree) in &tree_edges {
                     let child_id = Self::dot_id(child);
                     let parent_id = Self::dot_id(parent);
-                    dot.push_str(&format!(
-                        "  {} -> {} [label=\"{}\", color=blue, weight={}];\n",
-                        child_id, parent_id, tree, tree_weight
-                    ));
+                    let color = if color_trees {
+                        color_map.get(tree.as_str()).unwrap_or(&"blue")
+                    } else {
+                        &"blue"
+                    };
+                    if hide_tree_labels {
+                        dot.push_str(&format!(
+                            "  {} -> {} [color={}, weight={}];\n",
+                            child_id, parent_id, color, tree_weight
+                        ));
+                    } else {
+                        dot.push_str(&format!(
+                            "  {} -> {} [label=\"{}\", color={}, weight={}];\n",
+                            child_id, parent_id, tree, color, tree_weight
+                        ));
+                    }
                 }
             }
         }
