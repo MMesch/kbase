@@ -1432,7 +1432,7 @@ EXAMPLE QUERIES:
                 let id = Self::dot_id(title);
                 let is_note = notes.iter().any(|(t, _)| t == *title);
                 if is_note {
-                    dot.push_str(&format!("  {} [label=\"{}\", shape=box];\n", id, escaped));
+                    dot.push_str(&format!("  {} [label=\"{}\", shape=box, style=filled, fillcolor=white];\n", id, escaped));
                 } else {
                     dot.push_str(&format!("  {} [label=\"{}\", shape=oval, style=filled, fillcolor=lightgray, fontsize=10];\n", id, escaped));
                 }
