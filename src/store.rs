@@ -1618,12 +1618,12 @@ EXAMPLE QUERIES:
                     };
                     if hide_tree_labels {
                         dot.push_str(&format!(
-                            "  {} -> {} [color={}, weight={}];\n",
+                            "  {} -> {} [color=\"{}\", weight={}];\n",
                             child_id, parent_id, color, tree_weight
                         ));
                     } else {
                         dot.push_str(&format!(
-                            "  {} -> {} [label=\"{}\", color={}, weight={}];\n",
+                            "  {} -> {} [label=\"{}\", color=\"{}\", weight={}];\n",
                             child_id, parent_id, tree, color, tree_weight
                         ));
                     }
