@@ -1457,8 +1457,31 @@ EXAMPLE QUERIES:
                             (solution.get("from_title"), solution.get("target"))
                         {
                             let from_id = Self::dot_id(from.value());
-                            let to_id = Self::dot_id(target.value());
-                            link_edges.push(format!("  {} -> {} [style=dashed, color=gray];\n", from_id, to_id));
+                            let target_str = target.value();
+                            // Resolve link target to a known note. For markdown links (paths
+                            // like /dir/file.md), match by stripping .md and comparing to
+                            // note paths. For wiki links (titles), match by title directly.
+                            let resolved = if target_str.ends_with(".md") {
+                                let stem = target_str
+                                    .trim_end_matches(".md")
+                                    .trim_start_matches('/')
+                                    .to_lowercase();
+                                notes.iter().find_map(|(title, path)| {
+                                    if path.trim_end_matches(".md").to_lowercase().ends_with(&stem) {
+                                        Some(title.as_str())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            } else if all_nodes.contains(target_str) {
+                                Some(target_str)
+                            } else {
+                                None
+                            };
+                            if let Some(resolved_title) = resolved {
+                                let to_id = Self::dot_id(resolved_title);
+                                link_edges.push(format!("  {} -> {} [style=dashed, color=gray];\n", from_id, to_id));
+                            }
                         }
                     }
                 }
