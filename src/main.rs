@@ -1333,13 +1333,30 @@ fn convert_wiki_to_markdown(
         })
         .collect();
 
+    // Build slug -> title map for wiki-paths display text
+    let slug_to_title: std::collections::HashMap<String, String> = notes
+        .iter()
+        .filter_map(|n| {
+            n.path.strip_prefix(vault_path).ok().and_then(|rel| {
+                rel.to_str().map(|r| (r.trim_end_matches(".md").to_lowercase(), n.title.clone()))
+            })
+        })
+        .collect();
+
     // Match [[Title]] or [[Title|Alias]]
     let re = Regex::new(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").unwrap();
 
     re.replace_all(content, |caps: &regex::Captures| {
         let title = &caps[1];
         let alias = caps.get(2).map(|m| m.as_str());
-        let display = alias.unwrap_or(title);
+        let display = alias.unwrap_or_else(|| {
+            // For wiki-paths links without alias, use the note's actual title
+            if title.contains('/') {
+                slug_to_title.get(&title.to_lowercase()).map(|s| s.as_str()).unwrap_or(title)
+            } else {
+                title
+            }
+        });
 
         // Find path for this target. For wiki-paths targets (containing /),
         // try slug lookup first, then fall back to path generation.
@@ -1726,12 +1743,30 @@ mod tests {
 
     #[test]
     fn convert_wiki_to_markdown_path_target() {
-        // Wiki-paths format: preserves directory structure, slugifies only leaf
+        // Wiki-paths with alias: preserves directory structure, uses alias as display
         let content = "See [[knowledge/ecosystem/arrow/sparrow|sparrow]].";
         let notes = vec![];
         let vault = PathBuf::from("/fake/vault");
         let result = convert_wiki_to_markdown(content, &vault, &notes, &vault, config::LinkBase::Relative);
         assert_eq!(result, "See [sparrow](knowledge/ecosystem/arrow/sparrow.md).");
+    }
+
+    #[test]
+    fn convert_wiki_to_markdown_path_uses_note_title() {
+        // Wiki-paths without alias: looks up note title by slug, uses it as display
+        let vault = PathBuf::from("/fake/vault");
+        let note = note::Note {
+            title: "Sparrow".to_string(),
+            path: vault.join("knowledge/ecosystem/arrow/sparrow.md"),
+            tags: vec![],
+            tree_edges: vec![],
+            fields: Default::default(),
+            links: vec![],
+            typed_links: vec![],
+        };
+        let content = "See [[knowledge/ecosystem/arrow/sparrow]].";
+        let result = convert_wiki_to_markdown(content, &vault, &[note], &vault, config::LinkBase::Vault);
+        assert_eq!(result, "See [Sparrow](/knowledge/ecosystem/arrow/sparrow.md).");
     }
 
     #[test]
