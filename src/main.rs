@@ -1827,6 +1827,32 @@ mod tests {
         assert_eq!(result, content);  // Should not convert http links
     }
 
+    // --- normalize_markdown_links tests ---
+
+    #[test]
+    fn normalize_markdown_leaves_http() {
+        let vault = PathBuf::from("/fake/vault");
+        let content = "See [website](https://example.com).";
+        let result = normalize_markdown_links(content, &vault.join("main.md"), &[], &vault, config::LinkBase::Vault);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn normalize_markdown_leaves_unresolved() {
+        let vault = PathBuf::from("/fake/vault");
+        let content = "See [text](unknown-file.md)";
+        let result = normalize_markdown_links(content, &vault.join("main.md"), &[], &vault, config::LinkBase::Vault);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn normalize_markdown_preserves_non_md() {
+        let vault = PathBuf::from("/fake/vault");
+        let content = "See [text](path.txt) and normal text.";
+        let result = normalize_markdown_links(content, &vault.join("main.md"), &[], &vault, config::LinkBase::Vault);
+        assert_eq!(result, content);
+    }
+
     #[test]
     fn update_wikilinks_basic_rename() {
         let dir = std::env::temp_dir().join(format!("kbase-test-wikilinks-{}", std::process::id()));
