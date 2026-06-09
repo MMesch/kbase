@@ -1227,7 +1227,7 @@ fn main() -> Result<()> {
             for n in &notes {
                 let content = std::fs::read_to_string(&n.path)?;
                 let new_content = match &mode {
-                    ConvertMode::ToMarkdown => convert_wiki_to_markdown(&content, &notes),
+                    ConvertMode::ToMarkdown => convert_wiki_to_markdown(&content, &n.path, &notes, &vault_path, cfg.link_base),
                     ConvertMode::ToWiki => convert_markdown_to_wiki(&content),
                     ConvertMode::Normalize => normalize_markdown_links(&content, &n.path, &notes, &vault_path, cfg.link_base),
                     ConvertMode::ToWikiPaths => convert_markdown_to_wiki_paths(&content),
@@ -1302,19 +1302,23 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Convert wiki links [[Title]] to markdown [Title](slug.md)
-fn convert_wiki_to_markdown(content: &str, notes: &[note::Note]) -> String {
+/// Convert wiki links [[Title]] to markdown [Title](path.md)
+/// Uses the configured link_base to generate vault-relative or relative paths.
+fn convert_wiki_to_markdown(
+    content: &str,
+    current_file: &Path,
+    notes: &[note::Note],
+    vault_path: &Path,
+    link_base: config::LinkBase,
+) -> String {
     use regex::Regex;
 
-    // Build title -> slug map
-    let title_to_slug: std::collections::HashMap<String, String> = notes
+    // Build title -> link path map
+    let title_to_path: std::collections::HashMap<String, String> = notes
         .iter()
         .map(|n| {
-            let slug = n.path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(&n.title)
-                .to_string();
-            (n.title.to_lowercase(), slug)
+            let path = note::link_path(&n.path, current_file, link_base, Some(vault_path));
+            (n.title.to_lowercase(), path)
         })
         .collect();
 
@@ -1326,13 +1330,13 @@ fn convert_wiki_to_markdown(content: &str, notes: &[note::Note]) -> String {
         let alias = caps.get(2).map(|m| m.as_str());
         let display = alias.unwrap_or(title);
 
-        // Find slug for this title, or generate from title if note doesn't exist
-        let slug = title_to_slug
+        // Find path for this title, or generate from title if note doesn't exist
+        let path = title_to_path
             .get(&title.to_lowercase())
             .cloned()
-            .unwrap_or_else(|| note::slugify(title));
+            .unwrap_or_else(|| format!("{}.md", note::slugify(title)));
 
-        format!("[{}]({}.md)", display, slug)
+        format!("[{}]({})", display, path)
     })
     .to_string()
 }
@@ -1681,7 +1685,8 @@ mod tests {
     fn convert_wiki_to_markdown_basic() {
         let content = "See [[My Note]] for details.";
         let notes = vec![];  // Empty - will generate slug from title
-        let result = convert_wiki_to_markdown(content, &notes);
+        let vault = PathBuf::from("/fake/vault");
+        let result = convert_wiki_to_markdown(content, &vault, &notes, &vault, config::LinkBase::Relative);
         assert_eq!(result, "See [My Note](my-note.md) for details.");
     }
 
@@ -1689,7 +1694,8 @@ mod tests {
     fn convert_wiki_to_markdown_with_alias() {
         let content = "See [[My Note|this note]] for details.";
         let notes = vec![];
-        let result = convert_wiki_to_markdown(content, &notes);
+        let vault = PathBuf::from("/fake/vault");
+        let result = convert_wiki_to_markdown(content, &vault, &notes, &vault, config::LinkBase::Relative);
         assert_eq!(result, "See [this note](my-note.md) for details.");
     }
 
@@ -1739,7 +1745,8 @@ mod tests {
     fn convert_preserves_non_links() {
         let content = "Regular text with no links.";
         let notes = vec![];
-        assert_eq!(convert_wiki_to_markdown(content, &notes), content);
+        let vault = PathBuf::from("/fake/vault");
+        assert_eq!(convert_wiki_to_markdown(content, &vault, &notes, &vault, config::LinkBase::Relative), content);
         assert_eq!(convert_markdown_to_wiki(content), content);
     }
 
