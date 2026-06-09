@@ -1296,7 +1296,7 @@ EXAMPLE QUERIES:
         dot.push_str("  rankdir=LR;\n");
         dot.push_str("  outputorder=edgesfirst;\n");
         dot.push_str(
-            "  // Legend: box = note, oval/grey = tag, dashed = link, blue = tree edge\n"
+            "  // Legend: box = note, oval/grey = tag, dashed = link (weight=10), blue = tree edge (weight=0)\n"
         );
         dot.push_str("\n");
 
@@ -1529,9 +1529,9 @@ EXAMPLE QUERIES:
                             } else {
                                 None
                             };
-                            if let Some(resolved_title) = resolved {
-                                let to_id = Self::dot_id(resolved_title);
-                                link_edges.push(format!("  {} -> {} [style=dashed, color=gray];\n", from_id, to_id));
+                    if let Some(resolved_title) = resolved {
+                        let to_id = Self::dot_id(resolved_title);
+                        link_edges.push(format!("  {} -> {} [style=dashed, color=gray, weight=10];\n", from_id, to_id));
                             }
                         }
                     }
@@ -1596,7 +1596,7 @@ EXAMPLE QUERIES:
                     let child_id = Self::dot_id(child);
                     let parent_id = Self::dot_id(parent);
                     dot.push_str(&format!(
-                        "  {} -> {} [label=\"{}\", color=blue];\n",
+                        "  {} -> {} [label=\"{}\", color=blue, weight=0];\n",
                         child_id, parent_id, tree
                     ));
                 }
