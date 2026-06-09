@@ -1291,7 +1291,7 @@ EXAMPLE QUERIES:
     /// If `link_type` is provided, only typed links from that frontmatter field are shown
     /// (e.g., `link_type = Some("depends_on")`).
     /// If `tag_filter` is provided, only notes under that tag subtree are included.
-    pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool, tag_filter: Option<&str>, link_weight: f64, tree_weight: f64, hide_tree_labels: bool, color_trees: bool) -> Result<String> {
+    pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool, tag_filter: Option<&str>, link_weight: f64, tree_weight: f64, hide_tree_labels: bool, color_trees: bool, scale_by_backlinks: bool) -> Result<String> {
         let mut dot = String::from("digraph vault {\n");
         dot.push_str("  rankdir=LR;\n");
         dot.push_str("  outputorder=edgesfirst;\n");
@@ -1468,14 +1468,73 @@ EXAMPLE QUERIES:
             }
 
             // Phase 3: Write all node declarations
+            // Count in-degree (backlinks) for scaling
+            let in_degree: std::collections::HashMap<String, usize> = if scale_by_backlinks {
+                let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                let link_query = format!(
+                    r#"
+                    PREFIX kb: <{KBASE_NS}>
+                    SELECT ?target WHERE {{
+                        ?note kb:type kb:Note .
+                        ?note kb:linksTo ?target .
+                    }}
+                    "#
+                );
+                if let QueryResults::Solutions(solutions) = self.inner.query(&link_query)? {
+                    for solution in solutions.flatten() {
+                        if let Some(Term::Literal(target)) = solution.get("target") {
+                            let title = target.value();
+                            // Resolve target to note title (wiki or markdown link)
+                            let resolved = if title.ends_with(".md") {
+                                let stem = title.trim_end_matches(".md").trim_start_matches('/').to_lowercase();
+                                notes.iter().find_map(|(t, p)| {
+                                    if p.trim_end_matches(".md").to_lowercase().ends_with(&stem) {
+                                        Some(t.as_str())
+                                    } else { None }
+                                })
+                            } else {
+                                all_nodes.contains(title).then_some(title)
+                            };
+                            if let Some(t) = resolved {
+                                *counts.entry(t.to_string()).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                }
+                counts
+            } else {
+                std::collections::HashMap::new()
+            };
+
+            let max_in_degree = in_degree.values().max().copied().unwrap_or(1) as f64;
+
             let mut sorted_nodes: Vec<&String> = all_nodes.iter().collect();
             sorted_nodes.sort();
             for title in &sorted_nodes {
                 let escaped = title.replace('"', "\\\"");
                 let id = Self::dot_id(title);
                 let is_note = notes.iter().any(|(t, _)| t == *title);
+                let fontsize = if scale_by_backlinks && is_note {
+                    let count = in_degree.get(*title).copied().unwrap_or(0);
+                    // Scale: base 10, max 24, log-scaled to avoid extremes dominating
+                    if count > 0 {
+                        let scaled = 10.0 + 14.0 * (count as f64).ln() / (max_in_degree.ln().max(1.0));
+                        scaled.max(10.0).min(24.0)
+                    } else {
+                        10.0
+                    }
+                } else {
+                    0.0
+                };
                 if is_note {
-                    dot.push_str(&format!("  {} [label=\"{}\", shape=box, style=filled, fillcolor=white];\n", id, escaped));
+                    if scale_by_backlinks {
+                        dot.push_str(&format!(
+                            "  {} [label=\"{}\", shape=box, style=filled, fillcolor=white, fontsize={:.0}];\n",
+                            id, escaped, fontsize
+                        ));
+                    } else {
+                        dot.push_str(&format!("  {} [label=\"{}\", shape=box, style=filled, fillcolor=white];\n", id, escaped));
+                    }
                 } else {
                     dot.push_str(&format!("  {} [label=\"{}\", shape=oval, style=filled, fillcolor=lightgray, fontsize=10];\n", id, escaped));
                 }
