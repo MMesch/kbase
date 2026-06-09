@@ -1290,9 +1290,8 @@ EXAMPLE QUERIES:
     /// Export the graph as DOT format.
     /// If `link_type` is provided, only typed links from that frontmatter field are shown
     /// (e.g., `link_type = Some("depends_on")`).
-    /// If `hide_tags` is true, tag hierarchy nodes and edges are omitted.
-    /// If `hide_links` is true, note-to-note links are omitted.
-    pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool) -> Result<String> {
+    /// If `tag_filter` is provided, only notes under that tag subtree are included.
+    pub fn export_dot(&self, link_type: Option<&str>, hide_tags: bool, hide_links: bool, tag_filter: Option<&str>) -> Result<String> {
         let mut dot = String::from("digraph vault {\n");
         dot.push_str("  rankdir=LR;\n");
         dot.push_str("  outputorder=edgesfirst;\n");
@@ -1389,6 +1388,44 @@ EXAMPLE QUERIES:
             // Phase 2: Collect tree edge nodes (non-note nodes like tag hierarchy)
             // Skip if hide_tags is set
             let mut tree_edges: Vec<(String, String, String)> = Vec::new();
+
+            // If tag filter is provided, collect the filtered set of note titles
+            let filtered_titles: Option<std::collections::HashSet<String>> = if let Some(filter_tag) = tag_filter {
+                let tag_iri = self.tag_iri(filter_tag);
+                let tag_query = format!(
+                    r#"
+                    PREFIX kb: <{KBASE_NS}>
+                    SELECT DISTINCT ?title WHERE {{
+                        ?note kb:type kb:Note .
+                        ?note kb:title ?title .
+                        ?note kb:hasTag ?t .
+                        {{ ?t kb:parentTag* <{}> . }} UNION {{ BIND(<{}> AS ?needle) FILTER(?t = ?needle) }}
+                    }}
+                    "#,
+                    tag_iri.as_str(), tag_iri.as_str()
+                );
+                let mut titles: std::collections::HashSet<String> = std::collections::HashSet::new();
+                if let QueryResults::Solutions(solutions) = self.inner.query(&tag_query)? {
+                    for solution in solutions.flatten() {
+                        if let Some(Term::Literal(title)) = solution.get("title") {
+                            titles.insert(title.value().to_string());
+                        }
+                    }
+                }
+                if titles.is_empty() {
+                    return Ok(dot); // No matching notes, return empty graph
+                }
+                Some(titles)
+            } else {
+                None
+            };
+
+            // Apply tag filter to notes and node set
+            if let Some(ref filtered) = filtered_titles {
+                notes.retain(|(title, _)| filtered.contains(title));
+                all_nodes.retain(|title| filtered.contains(title));
+            }
+
             if !hide_tags {
                 let tree_query = format!(
                     r#"
@@ -1413,11 +1450,17 @@ EXAMPLE QUERIES:
                                 parent.as_str().strip_prefix(&note_prefix),
                                 pred.as_str().strip_prefix(&pred_prefix),
                             ) {
-                                let child_title = urlencoding::decode(child_enc).unwrap_or_default();
-                                let parent_title = urlencoding::decode(parent_enc).unwrap_or_default();
-                                all_nodes.insert(child_title.to_string());
-                                all_nodes.insert(parent_title.to_string());
-                                tree_edges.push((child_title.to_string(), parent_title.to_string(), tree.to_string()));
+                                let child_title = urlencoding::decode(child_enc).unwrap_or_default().to_string();
+                                let parent_title = urlencoding::decode(parent_enc).unwrap_or_default().to_string();
+                                // If tag filter active, only include edges from filtered notes
+                                if let Some(ref filtered) = filtered_titles {
+                                    if !filtered.contains(&child_title) {
+                                        continue;
+                                    }
+                                }
+                                all_nodes.insert(child_title.clone());
+                                all_nodes.insert(parent_title.clone());
+                                tree_edges.push((child_title, parent_title, tree.to_string()));
                             }
                         }
                     }
@@ -1460,6 +1503,12 @@ EXAMPLE QUERIES:
                         {
                             let from_id = Self::dot_id(from.value());
                             let target_str = target.value();
+                            // If tag filter active, skip links from non-filtered notes
+                            if let Some(ref filtered) = filtered_titles {
+                                if !filtered.contains(from.value()) {
+                                    continue;
+                                }
+                            }
                             // Resolve link target to a known note. For markdown links (paths
                             // like /dir/file.md), match by stripping .md and comparing to
                             // note paths. For wiki links (titles), match by title directly.

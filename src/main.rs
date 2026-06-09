@@ -179,6 +179,9 @@ enum Commands {
         /// Hide note-to-note links, show only tag hierarchy
         #[arg(long)]
         hide_links: bool,
+        /// Filter to notes under this tag subtree (includes descendant tags)
+        #[arg(long)]
+        tag: Option<String>,
     },
     /// Show vault overview (tags, link structure, key notes)
     Overview {
@@ -758,12 +761,12 @@ fn main() -> Result<()> {
             let cwd = std::env::current_dir()?;
             println!("\nSkills installed to {}/.claude/skills/", cwd.display());
         }
-        Commands::Export { format, output, link_type, hide_tags, hide_links } => {
+        Commands::Export { format, output, link_type, hide_tags, hide_links, tag } => {
             let vault_path = get_vault()?;
             let store = load_store(&vault_path, &mut timer)?;
 
             let content = match format.as_str() {
-                "dot" => store.export_dot(link_type.as_deref(), hide_tags, hide_links)?,
+                "dot" => store.export_dot(link_type.as_deref(), hide_tags, hide_links, tag.as_deref())?,
                 "graphml" => store.export_graphml()?,
                 _ => anyhow::bail!("Unknown format: {}. Use 'dot' or 'graphml'", format),
             };
